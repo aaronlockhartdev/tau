@@ -7,7 +7,7 @@
 //! which `cargo clean` removes; `Then the project directory is removed` cleans it
 //! after a scenario that passes.
 
-use crate::steps::session::{EVENTS, SESSION, STATE, TURN, commit_tool_call, open_at};
+use crate::steps::session::{BLOCKS, SESSION, commit_tool_call, open_at};
 use crate::steps::{assert_clean, report};
 use crate::world::World;
 use cucumber::{given, then, when};
@@ -233,28 +233,29 @@ async fn store_is_the_project_state_file(world: &mut World) {
     // Read the store into owned values first, so the borrow ends before a report.
     let read = world.store.as_ref().map(|store| {
         (
-            store.events(SESSION, TURN).map(|rows| rows.len()),
-            store.turn_state(SESSION, TURN),
+            store.run(SESSION).map(|rows| rows.len()),
+            store
+                .latest_request(SESSION)
+                .map(|request| request.is_some()),
         )
     });
-    let Some((events, state)) = read else {
+    let Some((blocks, request)) = read else {
         report(world, "no store is open".to_string());
         assert_clean(world, "the store is the project's state file");
         return;
     };
-    match events {
-        Ok(rows) if rows == EVENTS.len() => {}
+    match blocks {
+        Ok(rows) if rows == BLOCKS.len() => {}
         Ok(rows) => report(
             world,
-            format!("{rows} events are stored, expected {}", EVENTS.len()),
+            format!("{rows} blocks are stored, expected {}", BLOCKS.len()),
         ),
         Err(e) => report(world, format!("read the log: {e}")),
     }
-    match state {
-        Ok(Some(state)) if state == STATE => {}
-        Ok(Some(state)) => report(world, format!("the stored state is {state}")),
-        Ok(None) => report(world, "no turn state is stored".to_string()),
-        Err(e) => report(world, format!("read the turn state: {e}")),
+    match request {
+        Ok(true) => {}
+        Ok(false) => report(world, "no request row is stored".to_string()),
+        Err(e) => report(world, format!("read the request: {e}")),
     }
     assert_clean(world, "the store is the project's state file");
 }

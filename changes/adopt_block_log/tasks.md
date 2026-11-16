@@ -5,38 +5,64 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] IDs: this change claims `R-session-35..40, 45 and 46`; `add_turn_loop` claims 41..44 and lands after
 this one, so the session range is split until that change archives — the gap check counts open deltas, so
 `spec -- --check` stays green across the split
-- [ ] gates: confirm `core has no UI logic`, `core has no runtime`, `core spawns nothing` stay green over the renamed schema (no new rows in this change)
-- [ ] R-session-35: delta clause in changes/adopt_block_log/specs/session/storage/spec.md, then rewrite the migration in place in `crates/tau-core/src/storage/mod.rs` — `events` → `blocks`, drop the `turn` table, the `committed` column and `events_no_late_insert`, add `requests`, rebuild `blocks_fts` (external content: drop, recreate, rebuild); pre-v1, so no store upgrade ships
-- [ ] R-session-35: `Store::commit(&Block)` — one transaction per block, and one transaction for the batch a stream closes at once, store-wide sequence
-- [ ] R-session-36: the request row (session, request, provider_id, model, four usage counts, reason) and its open write
-- [ ] R-session-37: state pointers on the block row; drop `turn.state` and `Store::turn_state`
-- [ ] R-session-38: the request column, nullable, and the user-input and injection cases in the lane
-- [ ] R-session-39: `Store::latest_request` and `Store::blocks_after` reads; the mutation that proves `Store::run` is not the resume read
-- [ ] R-session-45: the slot on the block row, and an injection block that fills one
-- [ ] R-session-46: the slot read, answering a session's blocks by the slot they record
-- [ ] R-session-40: the terminal stamp, and a request row with a reason and no block
-- [ ] R-session-02: the block-and-state transaction, proved by the crash child
-- [ ] R-session-03: the scan's mutable set becomes `sessions` and `requests` in `crates/tau-test/src/steps/session.rs`
-- [ ] R-session-04: the in-flight window scenario at block scale, with the checkpoint probe kept after the writer closes
-- [ ] R-session-05: `synchronous = NORMAL` stated for a committed block, not a committed turn (@R-session-05)
-- [ ] R-session-06: `crash_store` child — a block killed after its commit is present, a killed transaction leaves no row
-- [ ] R-session-08: `Store::fork` copies blocks and the request rows they name, and fork-resume appends without duplicating a copied block
-- [ ] R-session-10: the FTS index over `blocks`, with the search scenarios unchanged in result
-- [ ] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
-- [ ] The mutable-state read in `crates/tau-test/src/steps/session.rs:579` names `sessions` and `turn`; it
+- [x] gates: confirm `core has no UI logic`, `core has no runtime`, `core spawns nothing` stay green over the renamed schema (no new rows in this change)
+- [x] R-session-35: delta clause in changes/adopt_block_log/specs/session/storage/spec.md, then rewrite the migration in place in `crates/tau-core/src/storage/mod.rs` — `events` → `blocks`, drop the `turn` table, the `committed` column and `events_no_late_insert`, add `requests`, rebuild `blocks_fts` (external content: drop, recreate, rebuild); pre-v1, so no store upgrade ships
+- [x] R-session-35: `Store::commit(&Block)` — one transaction per block, and one transaction for the batch a stream closes at once, store-wide sequence
+- [x] R-session-36: the request row (session, request, provider_id, model, four usage counts, reason) and its open write
+- [x] R-session-37: state pointers on the block row; drop `turn.state` and `Store::turn_state`
+- [x] R-session-38: the request column, nullable, and the user-input and injection cases in the lane
+- [x] R-session-39: `Store::latest_request` and `Store::blocks_after` reads; the mutation that proves `Store::run` is not the resume read
+- [x] R-session-45: the slot on the block row, and an injection block that fills one
+- [x] R-session-46: the slot read, answering a session's blocks by the slot they record
+- [x] R-session-40: the terminal stamp, and a request row with a reason and no block
+- [x] R-session-02: the block-and-state transaction, proved by the crash child
+- [x] R-session-03: the scan's mutable set becomes `sessions` and `requests` in `crates/tau-test/src/steps/session.rs`
+- [x] R-session-04: the in-flight window scenario at block scale, with the checkpoint probe kept after the writer closes
+- [x] R-session-05: `synchronous = NORMAL` stated for a committed block, not a committed turn (@R-session-05)
+- [x] R-session-06: `crash_store` child — a block killed after its commit is present, a killed transaction leaves no row
+- [x] R-session-08: `Store::fork` copies blocks and the request rows they name, and fork-resume appends without duplicating a copied block
+- [x] R-session-10: the FTS index over `blocks`, with the search scenarios unchanged in result
+- [x] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
+- [x] The mutable-state read in `crates/tau-test/src/steps/session.rs:579` names `sessions` and `turn`; it
 names `sessions` and `requests` after this change, and R-session-03's clause says the two by name
-- [ ] R-session-13: the harness read answers from store queries over blocks, and `RunTurn`'s per-turn state
+- [x] R-session-13: the harness read answers from store queries over blocks, and `RunTurn`'s per-turn state
 is dropped
-- [ ] R-session-28: the event time lands on the block row
-- [ ] R-session-31: the update and delete triggers name `blocks`
-- [ ] R-session-32: the composite FK to `requests`, and the orphan-row refusal
+- [x] R-session-28: the event time lands on the block row
+- [x] R-session-31: the update and delete triggers name `blocks`
+- [x] R-session-32: the composite FK to `requests`, and the orphan-row refusal
+- [x] R-session-32, 37: the keys bind every row a commit writes — `blocks.session` references
+  `sessions`, a state is stored as a pair and in order (`CHECK`), and a trigger refuses a pointer
+  naming no block of the session. Scenarios refuse a block for an unrecorded session (mutation:
+  dropping the reference answers `the block naming an unrecorded session was written`), half a
+  state, a pair that runs backwards, and a pair naming nothing (mutation: `RAISE(IGNORE)` answers
+  `the block whose state names no block was written`)
+- [x] R-session-37, R-session-08: a fork re-points a state by the pointer's rank among the copied
+  sequences, and drops a pair naming a block the range leaves behind. Scenarios fork over the whole
+  range and over part of it; `a_fork_moves_the_pointers_across_a_gap` forks across a gap another
+  session left (mutation: mapping by `seq + (next - from)` answers `left: Some((8, 10)) right:
+  Some((8, 9))` — the pair lands on the child's third copy, not its second)
+- [x] R-session-40: `stamp_request` writes the terminal once — the statement carries
+  `AND reason IS NULL`, and no row is `Error::Terminal`. A scenario stamps twice and reads the
+  first counts back (mutation: dropping the guard answers `a second terminal stamped over the
+  first; the reason is Some("refusal"), expected "completed"`)
+- [x] R-session-40: `crash_store`'s `blocks` mode commits the blocks and stops before the stamp;
+  a scenario kills in that window, and the reopen reads every block with an open request that a
+  further block names
+- [x] R-session-08: the forked child opens a request of its own and appends, and the scenario
+  counts the copy plus the child's block with no sequence reused
+- [x] R-session-39: the resume scenario logs two round-trips, so a read of the oldest request, not
+  the newest, answers it red
+- [x] R-session-34: the bounded scenario runs the journal-upgrade leg, where a standing lock is
+  refused on the spot, so its budget is 20 attempts of a 50 ms backoff (~1 s) and the 5 s beat
+  leaves ~4 s for the refusal to land. The migration leg is the slow one, ~2.95 s: every attempt
+  burns its 100 ms busy timeout before the backoff, so a 3 s beat there leaves ~50 ms
 - [ ] R-session-07: delete the `turn.committed` column, the `events_no_late_insert` trigger and the
 `RunTurn.committed` field, and the scenarios tagged `@R-session-07` in the same archive commit that retires
 the clause — the tag and the ref leave the corpus together, so `spec --check` stays green
 - [ ] R-session-30: the late-event scenarios tagged `@R-session-30` go in the same archive commit that retires
 the clause; `blocks` immutability is R-session-31's
-- [ ] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
-- [ ] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
+- [x] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
+- [x] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
 - [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`, `user input`, `usage`, `terminal`
 and `state`; drop `turn` and `committed marker`; re-word `log`, `run`, `session`, `steer` and `session start
 output`. The live `log` cell names `events`, `run` reads "a session's turns in order, with the events each

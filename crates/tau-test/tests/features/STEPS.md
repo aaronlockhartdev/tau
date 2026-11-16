@@ -23,21 +23,26 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Given an open store
 - When the store is opened again
 - Then the second open is refused
-- When a tool call commits its events and its state change
-- Then the events and the state change are stored together
-- When a tool call's commit is refused
-- Then the refused commit stores nothing
-- When an event for a turn with no state row is inserted
-- When a late event for the committed turn is inserted
-- When a stored event row is updated
-- When a stored event row is deleted
+- When a request is opened and a tool call commits its blocks
+- Then the blocks are stored in the order they were committed
+- Then each block carries the time it was given
+- Then the request row records its model with no usage and no reason
+- When the blocks a stream closed at once are committed
+- Then the batch lands as one commit, on adjacent sequences
+- When a request is stamped terminal
+- When a batch naming a terminal request is committed
+- Then the refused batch stores no block
+- When a block for a request with no row is inserted
+- When a block naming that request is inserted
+- When a stored block row is updated
+- When a stored block row is deleted
 - Then the store refuses the write
-- Then the stored events carry the times they were given
 - Then the session records a creation time
-- Given a store whose turn was committed by a process that is killed
+- Given a store whose block was committed by a process that is killed
 - Given a store whose rows were written by a process that is killed
-- Then the committed turn is returned in full
-- Then the killed transaction leaves the turn empty
+- Then the committed block is returned in full
+- Then the log carries no committed marker
+- Then the killed transaction leaves no block
 - Then the state tables hold no log content
 - Then the store's synchronous is NORMAL
 - Given the store's own connection enforces foreign keys
@@ -46,13 +51,43 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - When the setup lock outlasts the store's retry budget
 - Then the store on disk is in WAL mode
 - Then the second instance is refused with a busy store
-- When the log is read between turns
-- When the log is read while a turn's transaction is open
+- When the log is read between commits
+- When the log is read while a block commit is in flight
 - Then the log checkpoints with no reader in the way
-- When the session is forked at the committed turn
-- Then the fork holds the copied events and names its parent
-- Then the index answers a search of the stored events
+- When the session is forked over its blocks
+- Then the fork holds the copied blocks, their request, and names its parent
+- Then the index answers a search of the stored blocks
 - When the session is exported
-- When a turn that produced no events commits
-- Then the run answers every turn of the session with its events
-- Then the export holds one line per event and the store answers the same
+- When a request that streamed no block is opened and stamped
+- Then the run answers the session's blocks in sequence
+- Then the export holds one line per block and the store answers the same
+- When a block carrying state pointers is committed
+- Then the state answers as pointers into the log
+- When a user input block and an injection block are committed
+- Then the blocks answer their requests, and the two name none
+- When a steering block is committed
+- Then the resume reads answer the newest request and the blocks after it
+- Then the whole-session read answers every block again
+- Then the newest request answers its counts and its reason
+- Then a count the provider never reported stays null
+- Then the injection block names the slot it fills
+- Then the slot answers the blocks that name it
+- When a second terminal is stamped for that request
+- Then the first terminal answers its counts and its reason
+- When a block naming a session that is not recorded is inserted
+- When a block carrying half a state is inserted
+- When a block is committed with a state naming the first block
+- Then the child's state names the child's copy of that block
+- When the session is forked from its second block
+- Then the second child carries no state
+- When the child opens a request and commits a block
+- Then the child holds the copied blocks and its own
+- Given a store whose blocks committed and whose terminal was not stamped
+- Then the blocks answer and the request carries no reason
+- When a second request is opened, commits a block and is stamped terminal
+- When a block whose state runs backwards is inserted
+- When a block whose state names no block is inserted
+- When a block whose state ends on no block is inserted
+- When a block whose state has an end and no beginning is inserted
+- When a block is committed with a state naming the second block
+- Then the session's state names the pair the second block left

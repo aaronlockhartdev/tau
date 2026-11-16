@@ -1,13 +1,16 @@
 //! Session storage (`spec/session/storage`). Core owns the store: one write
-//! connection per open store in a process (R-session-01), the `events` log, and the
-//! mutable state tables, committed in one transaction (R-session-02).
+//! connection per open store in a process (R-session-01), the `blocks` log, and the
+//! mutable state tables, a block and its state pointers committed in one transaction
+//! (R-session-02).
 //!
-//! Duties are separated by schema: `events` rows are appended and never updated
-//! (R-session-31), a log row names a state row while foreign keys are on (R-session-32),
-//! and a turn closed by its committed marker takes no further event (R-session-30). The mutable
-//! rows — the turn state and its marker — live in `turn`. A tool call commits its
-//! events and its state change together, so no fact has two owners. Times are core's:
-//! an event carries its event time and the store records that value (R-session-28),
+//! Duties are separated by schema: `blocks` rows are appended and never updated
+//! (R-session-31), a block names the request it came from and no request past its
+//! terminal produces one (R-session-32), and a block is committed by the transaction
+//! that inserts it, so the log carries no marker for a caller to close. The mutable
+//! rows — the session row and the `requests` rows that carry usage and a terminal
+//! reason — live in `sessions` and `requests` alone (R-session-03). A tool call commits
+//! its blocks and their state pointers together, so no fact has two owners. Times are
+//! core's: a block carries its event time and the store records that value (R-session-28),
 //! and a session's creation time is stamped on the way in (R-session-29).
 
 use std::collections::HashSet;
@@ -75,50 +78,82 @@ fn setup<T, E>(
     }
 }
 
-const EVENT_INSERT: &str =
-    "INSERT INTO events (session, turn, ts, kind, payload) VALUES (?1, ?2, ?3, ?4, ?5)";
-const EVENTS_SELECT: &str =
-    "SELECT ts, kind, payload FROM events WHERE session = ?1 AND turn = ?2 ORDER BY seq";
-const TURN_SELECT: &str = "SELECT state FROM turn WHERE session = ?1 AND turn = ?2";
+const BLOCK_INSERT: &str = "INSERT INTO blocks \
+     (session, request, ts, kind, payload, slot, state_start, state_end) \
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)";
+const BLOCKS_SELECT: &str = "SELECT seq, request, ts, kind, payload, slot, state_start, state_end \
+     FROM blocks WHERE session = ?1 ORDER BY seq";
+const BLOCKS_AFTER_SELECT: &str = "SELECT seq, request, ts, kind, payload, slot, state_start, state_end \
+     FROM blocks WHERE session = ?1 AND seq > ?2 ORDER BY seq";
+const SLOT_SELECT: &str = "SELECT seq, request, ts, kind, payload, slot, state_start, state_end \
+     FROM blocks WHERE session = ?1 AND slot = ?2 ORDER BY seq";
+const LAST_SEQ_SELECT: &str = "SELECT max(seq) FROM blocks WHERE session = ?1 AND request = ?2";
+const REQUEST_SELECT: &str = "SELECT request, provider_id, model, usage_in, usage_cache_read, \
+     usage_cache_write, usage_out, reason FROM requests WHERE session = ?1 ORDER BY request DESC LIMIT 1";
 const SESSION_SELECT: &str = "SELECT created FROM sessions WHERE id = ?1";
 const PARENT_SELECT: &str = "SELECT parent FROM sessions WHERE id = ?1";
-/// A turn's state row, inserted before its events (the composite foreign key wants it
-/// first) and re-written when the turn is re-opened.
-const TURN_UPSERT: &str = "INSERT INTO turn (session, turn, state) VALUES (?1, ?2, ?3)
-             ON CONFLICT (session, turn) DO UPDATE SET state = excluded.state";
-/// A search hit: a stored event, located — `(session, turn, ts, kind, payload)`.
+/// A request row, opened with null usage and no terminal reason. Its blocks arrive later,
+/// and the terminal write stamps the counts and the reason (R-session-40).
+const REQUEST_INSERT: &str = "INSERT INTO requests (session, request, provider_id, model) \
+     VALUES (?1, ?2, ?3, ?4)";
+const REQUEST_STAMP: &str = "UPDATE requests SET usage_in = ?3, usage_cache_read = ?4, \
+     usage_cache_write = ?5, usage_out = ?6, reason = ?7 \
+     WHERE session = ?1 AND request = ?2 AND reason IS NULL";
+/// A search hit: a stored block, located — `(session, seq, ts, kind, payload)`.
 pub type Hit = (String, i64, i64, String, String);
 /// The index answers, joined back to the log, so a hit is a row a caller can act on and
 /// not an index position.
-const SEARCH_SELECT: &str = "SELECT e.session, e.turn, e.ts, e.kind, e.payload \
-     FROM events_fts JOIN events e ON e.seq = events_fts.rowid \
-     WHERE events_fts MATCH ?1 ORDER BY e.seq";
-const EXPORT_SELECT: &str =
-    "SELECT turn, seq, ts, kind, payload FROM events WHERE session = ?1 ORDER BY seq";
-/// A run reads the state table and joins the log to it, so a turn with no events still
-/// answers, and no row is invented for a turn that has none.
-const RUN_SELECT: &str = "SELECT t.turn, t.state, t.committed, e.ts, e.kind, e.payload
-     FROM turn t LEFT JOIN events e ON e.session = t.session AND e.turn = t.turn
-     WHERE t.session = ?1 ORDER BY t.turn, e.seq";
-/// One tool call's worth of storage: the turn's new state and the events it
-/// produced, as `(kind, payload, ts)` triples in the order they are appended.
+const SEARCH_SELECT: &str = "SELECT b.session, b.seq, b.ts, b.kind, b.payload \
+     FROM blocks_fts JOIN blocks b ON b.seq = blocks_fts.rowid \
+     WHERE blocks_fts MATCH ?1 ORDER BY b.seq";
+const EXPORT_SELECT: &str = "SELECT seq, request, ts, kind, payload, slot, state_start, state_end \
+     FROM blocks WHERE session = ?1 ORDER BY seq";
+
+/// One block as the store records it: the request it came from, or none for user input
+/// and injections (R-session-38); the context slot it fills, when it fills one
+/// (R-session-45); and the state it leaves as pointers into `blocks` (R-session-37).
 /// `ts` is the event time (glossary): the caller stamps it, the store records it.
 #[derive(Debug)]
-pub struct Turn<'a> {
+pub struct Block<'a> {
     pub session: &'a str,
-    pub turn: i64,
-    pub state: &'a str,
-    pub events: &'a [(&'a str, &'a str, i64)],
+    pub request: Option<i64>,
+    pub ts: i64,
+    pub kind: &'a str,
+    pub payload: &'a str,
+    pub slot: Option<&'a str>,
+    /// The state this block leaves, as the first and last sequences of the context it was built
+    /// from. Both name blocks the session has already written: the log is append-only, so a
+    /// pointer to a later sequence is refused, as is half a pair (R-session-37).
+    pub state_start: Option<i64>,
+    pub state_end: Option<i64>,
 }
 
-/// One turn of a run, as the store answers it: the state the turn left, whether it
-/// committed, and the events it produced as `(ts, kind, payload)` in log order.
+/// A block as the store answers it, with the sequence the store assigned.
 #[derive(Debug, PartialEq)]
-pub struct RunTurn {
-    pub turn: i64,
-    pub state: String,
-    pub committed: bool,
-    pub events: Vec<(i64, String, String)>,
+pub struct StoredBlock {
+    pub seq: i64,
+    pub request: Option<i64>,
+    pub ts: i64,
+    pub kind: String,
+    pub payload: String,
+    pub slot: Option<String>,
+    pub state_start: Option<i64>,
+    pub state_end: Option<i64>,
+}
+
+/// One provider round-trip, as the store answers it: its model, its usage counts —
+/// null while the request is open, and null for a count the provider never reported
+/// (R-session-40) — and its terminal reason, null until the request reaches one.
+#[derive(Debug, PartialEq)]
+pub struct Request {
+    pub request: i64,
+    pub provider_id: Option<String>,
+    pub model: String,
+    pub usage_in: Option<i64>,
+    pub usage_cache_read: Option<i64>,
+    pub usage_cache_write: Option<i64>,
+    pub usage_out: Option<i64>,
+    pub reason: Option<String>,
 }
 
 /// Why a store write did not happen.
@@ -129,6 +164,9 @@ pub enum Error {
     AlreadyOpen(PathBuf),
     /// A store panicked while holding the open-store claim.
     Claimed,
+    /// A request's terminal is one event, and the stamp found no open request row to land
+    /// on: the request was never opened, or its terminal already landed (R-session-40).
+    Terminal(String),
     /// The store settled on a journal mode that is not WAL.
     NotWal(String),
     /// `synchronous` did not come back as NORMAL, so every commit would pay the fsync.
@@ -145,6 +183,7 @@ impl fmt::Display for Error {
         match self {
             Self::AlreadyOpen(path) => write!(f, "{} is already open for writing", path.display()),
             Self::Claimed => f.write_str("the open-store claim is poisoned"),
+            Self::Terminal(what) => write!(f, "no open request row to stamp: {what}"),
             Self::NotWal(mode) => write!(f, "journal mode is {mode}, expected wal"),
             Self::NotNormal(sync) => write!(f, "synchronous is {sync}, expected 1 (NORMAL)"),
             Self::NotForeignKeys(fk) => write!(f, "foreign keys are {fk}, expected 1 (ON)"),
@@ -186,46 +225,68 @@ fn migrations() -> Migrations<'static> {
              parent TEXT REFERENCES sessions(id),
              created INTEGER NOT NULL
          );
-         CREATE TABLE turn (
+         CREATE TABLE requests (
              session TEXT NOT NULL REFERENCES sessions(id),
-             turn INTEGER NOT NULL,
-             state TEXT NOT NULL,
-             committed INTEGER NOT NULL DEFAULT 0 CHECK (committed IN (0, 1)),
-             PRIMARY KEY (session, turn)
+             request INTEGER NOT NULL,
+             provider_id TEXT,
+             model TEXT NOT NULL,
+             usage_in INTEGER,
+             usage_cache_read INTEGER,
+             usage_cache_write INTEGER,
+             usage_out INTEGER,
+             reason TEXT,
+             PRIMARY KEY (session, request)
          );
-         CREATE TABLE events (
+         CREATE TABLE blocks (
              seq INTEGER PRIMARY KEY,
-             session TEXT NOT NULL,
-             turn INTEGER NOT NULL,
+             session TEXT NOT NULL REFERENCES sessions(id),
+             request INTEGER,
              ts INTEGER NOT NULL,
              kind TEXT NOT NULL,
              payload TEXT NOT NULL,
-             FOREIGN KEY (session, turn) REFERENCES turn (session, turn)
+             slot TEXT,
+             state_start INTEGER,
+             state_end INTEGER,
+            CHECK ((state_start IS NULL) = (state_end IS NULL)
+                   AND (state_start IS NULL OR state_start <= state_end)),
+             FOREIGN KEY (session, request) REFERENCES requests (session, request)
          );
-         CREATE INDEX events_turn ON events (session, turn, seq);
-         CREATE VIRTUAL TABLE events_fts USING fts5(kind, payload, content='events',
+         CREATE INDEX blocks_session ON blocks (session, seq);
+         -- A state names blocks the session has already written: the log is append-only, so a
+         -- pointer to a later block is unwritable, not merely useless.
+        CREATE TRIGGER blocks_state_named AFTER INSERT ON blocks
+         WHEN NEW.state_start IS NOT NULL AND (
+             NOT EXISTS (SELECT 1 FROM blocks b
+                         WHERE b.session = NEW.session AND b.seq = NEW.state_start)
+             OR NOT EXISTS (SELECT 1 FROM blocks b
+                           WHERE b.session = NEW.session AND b.seq = NEW.state_end))
+         BEGIN
+             SELECT RAISE(ABORT, 'a state pointer names no block of the session');
+         END;
+         CREATE VIRTUAL TABLE blocks_fts USING fts5(kind, payload, content='blocks',
              content_rowid='seq');
-         CREATE TRIGGER events_fts_insert AFTER INSERT ON events BEGIN
-             INSERT INTO events_fts (rowid, kind, payload)
+         CREATE TRIGGER blocks_fts_insert AFTER INSERT ON blocks BEGIN
+             INSERT INTO blocks_fts (rowid, kind, payload)
              VALUES (NEW.seq, NEW.kind, NEW.payload);
          END;
-         CREATE TRIGGER events_no_late_insert
-             BEFORE INSERT ON events
-             WHEN EXISTS (SELECT 1 FROM turn WHERE turn.session = NEW.session
-                 AND turn.turn = NEW.turn AND turn.committed = 1)
+         CREATE TRIGGER blocks_no_after_terminal
+             BEFORE INSERT ON blocks
+             WHEN NEW.request IS NOT NULL AND EXISTS (
+                 SELECT 1 FROM requests
+                 WHERE session = NEW.session AND request = NEW.request AND reason IS NOT NULL)
              BEGIN
-                 SELECT RAISE(ABORT, 'a committed turn accepts no further event');
-             END;
-         CREATE TRIGGER events_no_update
-             BEFORE UPDATE ON events
+             SELECT RAISE(ABORT, 'a terminal request produces no further block');
+         END;
+         CREATE TRIGGER blocks_no_update
+             BEFORE UPDATE ON blocks
              BEGIN
-                 SELECT RAISE(ABORT, 'the log is append-only');
-             END;
-         CREATE TRIGGER events_no_delete
-             BEFORE DELETE ON events
+             SELECT RAISE(ABORT, 'the log is append-only');
+         END;
+         CREATE TRIGGER blocks_no_delete
+             BEFORE DELETE ON blocks
              BEGIN
-                 SELECT RAISE(ABORT, 'the log is append-only');
-             END;",
+             SELECT RAISE(ABORT, 'the log is append-only');
+         END;",
     )])
 }
 
@@ -265,8 +326,9 @@ impl Store {
     /// unchecked rows. It is set outside a transaction, where SQLite honours it — inside
     /// one the PRAGMA is a no-op.
     /// A setup that stays locked past the retry budget is refused with SQLite's busy
-    /// error: a setup absorbs a foreign writer for ~1 s (the journal upgrade) to ~3 s (the
-    /// migrations), where the 5 s timeout restored after setup absorbs a hundred times more.
+    /// error: a setup absorbs a foreign writer for ~1 s (the journal upgrade, on a fresh
+    /// file) to ~3 s (the migrations, on a file already in WAL, where each attempt burns the
+    /// busy timeout), where the 5 s timeout restored after setup absorbs more again.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
@@ -324,7 +386,7 @@ impl Store {
         Ok(Self { conn, path: key })
     }
 
-    /// Record a session in the store, so a turn's rows have something to belong to,
+    /// Record a session in the store, so a block's rows have something to belong to,
     /// and stamp its creation time (R-session-29): core supplies the value, the
     /// schema has no default.
     pub fn open_session(&self, id: &str) -> Result<(), Error> {
@@ -335,69 +397,166 @@ impl Store {
         Ok(())
     }
 
-    /// Write a turn's state change and its events in one transaction (R-session-02).
-    /// A failure leaves no event and no state change.
-    pub fn commit(&mut self, turn: &Turn<'_>) -> Result<(), Error> {
-        self.commit_marked(turn, 1)
+    /// Open a request: the row for one provider round-trip, with its model and an opaque
+    /// provider id the store stores as given, its usage null and no terminal reason
+    /// (R-session-36). The blocks it produces arrive later, naming it.
+    pub fn open_request(
+        &self,
+        session: &str,
+        request: i64,
+        provider_id: Option<&str>,
+        model: &str,
+    ) -> Result<(), Error> {
+        self.conn.execute(
+            REQUEST_INSERT,
+            rusqlite::params![session, request, provider_id, model],
+        )?;
+        Ok(())
     }
 
-    /// The transaction's statements, in the order the schema requires. The state row
-    /// goes first, because the log's foreign key points at it (R-session-32). The
-    /// marker goes last, so a turn that reads as committed is the proof its events are
-    /// there (R-session-07).
-    /// shortcut: the log has no dedup key, so writing a committed turn's events again is
-    /// refused (R-session-30), not deduplicated; idempotent replay arrives with
-    /// R-session-06's restart scenario.
-    fn commit_marked(&mut self, turn: &Turn<'_>, marker: i64) -> Result<(), Error> {
-        let tx = self.conn.transaction()?;
-        tx.execute(
-            TURN_UPSERT,
-            rusqlite::params![turn.session, turn.turn, turn.state],
+    /// Stamp a request's usage and terminal reason (R-session-40). A count the provider
+    /// never reported stays null. This is a write to a mutable row, allowed because
+    /// `requests` is a mutable table (R-session-03); the log is never touched.
+    #[allow(clippy::too_many_arguments)]
+    pub fn stamp_request(
+        &self,
+        session: &str,
+        request: i64,
+        usage_in: Option<i64>,
+        usage_cache_read: Option<i64>,
+        usage_cache_write: Option<i64>,
+        usage_out: Option<i64>,
+        reason: &str,
+    ) -> Result<(), Error> {
+        let stamped = self.conn.execute(
+            REQUEST_STAMP,
+            rusqlite::params![
+                session,
+                request,
+                usage_in,
+                usage_cache_read,
+                usage_cache_write,
+                usage_out,
+                reason
+            ],
         )?;
+        // The statement carries `AND reason IS NULL`, so no row means one of two caller
+        // faults: a request that was never opened, or one whose terminal already landed. A
+        // terminal is one event (R-session-40), and the second write would replace counts the
+        // provider reported with the caller's next argument.
+        if stamped == 0 {
+            return Err(Error::Terminal(format!(
+                "session {session} request {request}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Record one block, with the state pointers it carries, in one transaction
+    /// (R-session-02, R-session-35). A failure leaves no block row.
+    pub fn commit(&mut self, block: &Block<'_>) -> Result<(), Error> {
+        self.commit_all(std::slice::from_ref(block))
+    }
+
+    /// Record the blocks one stream closed at once, in log order, in one transaction
+    /// (R-session-35): a batch this store refuses leaves none of them.
+    pub fn commit_all(&mut self, blocks: &[Block<'_>]) -> Result<(), Error> {
+        let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare(EVENT_INSERT)?;
-            for (kind, payload, ts) in turn.events {
+            let mut stmt = tx.prepare(BLOCK_INSERT)?;
+            for block in blocks {
                 stmt.execute(rusqlite::params![
-                    turn.session,
-                    turn.turn,
-                    ts,
-                    kind,
-                    payload
+                    block.session,
+                    block.request,
+                    block.ts,
+                    block.kind,
+                    block.payload,
+                    block.slot,
+                    block.state_start,
+                    block.state_end
                 ])?;
             }
         }
-        tx.execute(
-            "UPDATE turn SET committed = ?3 WHERE session = ?1 AND turn = ?2",
-            rusqlite::params![turn.session, turn.turn, marker],
-        )?;
         tx.commit()?;
         Ok(())
     }
 
-    /// The events of one turn, in the order they were appended, as `(ts, kind, payload)`.
-    pub fn events(&self, session: &str, turn: i64) -> Result<Vec<(i64, String, String)>, Error> {
-        let mut stmt = self.conn.prepare(EVENTS_SELECT)?;
-        let rows = stmt.query_map(rusqlite::params![session, turn], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
+    /// A session's blocks, in the store's sequence order (R-session-13). One query over
+    /// the log, so a reader parses no format. No range: every payload arrives
+    /// materialised, which a caller reading a window of a long session bounds with
+    /// `blocks_after`.
+    pub fn run(&self, session: &str) -> Result<Vec<StoredBlock>, Error> {
+        self.read_all(BLOCKS_SELECT, rusqlite::params![session])
     }
 
-    /// The stored state of one turn, if the turn is stored at all.
-    pub fn turn_state(&self, session: &str, turn: i64) -> Result<Option<String>, Error> {
-        let mut stmt = self.conn.prepare(TURN_SELECT)?;
-        let mut rows = stmt.query(rusqlite::params![session, turn])?;
+    /// The newest request of a session — the resume read's anchor (R-session-39). An id
+    /// with no request answers `None`.
+    pub fn latest_request(&self, session: &str) -> Result<Option<Request>, Error> {
+        let mut stmt = self.conn.prepare(REQUEST_SELECT)?;
+        let mut rows = stmt.query(rusqlite::params![session])?;
         Ok(rows
             .next()?
-            .map(|row| row.get::<_, String>(0))
+            .map(|row| -> rusqlite::Result<Request> {
+                Ok(Request {
+                    request: row.get(0)?,
+                    provider_id: row.get(1)?,
+                    model: row.get(2)?,
+                    usage_in: row.get(3)?,
+                    usage_cache_read: row.get(4)?,
+                    usage_cache_write: row.get(5)?,
+                    usage_out: row.get(6)?,
+                    reason: row.get(7)?,
+                })
+            })
+            .transpose()?)
+    }
+
+    /// The sequence of the last block a request produced, for the resume read to read
+    /// after (R-session-39). A request that streamed no block answers `None`.
+    pub fn last_block_seq(&self, session: &str, request: i64) -> Result<Option<i64>, Error> {
+        Ok(self.conn.query_row(
+            LAST_SEQ_SELECT,
+            rusqlite::params![session, request],
+            |row| row.get::<_, Option<i64>>(0),
+        )?)
+    }
+
+    /// A session's blocks after a sequence, in log order — the resume read, which never
+    /// walks the blocks a request already produced (R-session-39).
+    pub fn blocks_after(&self, session: &str, after: i64) -> Result<Vec<StoredBlock>, Error> {
+        self.read_all(BLOCKS_AFTER_SELECT, rusqlite::params![session, after])
+    }
+
+    /// A session's blocks that name a slot, in log order (R-session-46). A slot no block
+    /// fills answers empty.
+    pub fn blocks_in_slot(&self, session: &str, slot: &str) -> Result<Vec<StoredBlock>, Error> {
+        self.read_all(SLOT_SELECT, rusqlite::params![session, slot])
+    }
+
+    fn read_all(
+        &self,
+        sql: &str,
+        params: &[&dyn rusqlite::ToSql],
+    ) -> Result<Vec<StoredBlock>, Error> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(params, stored_block)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// The state the newest state-carrying block of a session answers, as pointers into
+    /// `blocks` (R-session-37). State is pointers, never payload text, so the context
+    /// rebuilds from the log alone. A session whose blocks carry no state answers `None`.
+    pub fn state(&self, session: &str) -> Result<Option<(i64, i64)>, Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT state_start, state_end FROM blocks \
+             WHERE session = ?1 AND state_start IS NOT NULL ORDER BY seq DESC LIMIT 1",
+        )?;
+        let mut rows = stmt.query(rusqlite::params![session])?;
+        Ok(rows
+            .next()?
+            .map(|row| -> rusqlite::Result<(i64, i64)> {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
             .transpose()?)
     }
 
@@ -436,33 +595,64 @@ impl Store {
         SETUP_REFUSALS.load(Ordering::Relaxed)
     }
 
-    /// Copy an inclusive turn range into a new session, recording the parent
-    /// (R-session-08). The copied turn rows arrive uncommitted on purpose: a committed
-    /// turn refuses the events a fork copies, so a copy that carried the marker would
-    /// be refused by its own log.
+    /// Copy an inclusive block sequence range into a new session, recording the parent
+    /// (R-session-08). The `requests` rows the copied blocks name are copied with them:
+    /// every block names its request, so a copied range without those rows is a broken
+    /// record. A copied request keeps its number, and a request that reached its terminal
+    /// stays terminal in the child, so the child continues on a new request and appends
+    /// without duplicating a copied block.
     pub fn fork(
         &mut self,
         parent: &str,
         child: &str,
-        from_turn: i64,
-        to_turn: i64,
+        from_seq: i64,
+        to_seq: i64,
     ) -> Result<(), Error> {
         let tx = self.conn.transaction()?;
+        // The sequence the first copied block takes is the store's next one.
+        let next_seq: i64 =
+            tx.query_row("SELECT coalesce(max(seq), 0) + 1 FROM blocks", [], |row| {
+                row.get(0)
+            })?;
         tx.execute(
             "INSERT INTO sessions (id, parent, created) VALUES (?1, ?2, ?3)",
             rusqlite::params![child, parent, now_ms()],
         )?;
         tx.execute(
-            "INSERT INTO turn (session, turn, state)
-             SELECT ?1, turn, state FROM turn
-             WHERE session = ?2 AND turn BETWEEN ?3 AND ?4 ORDER BY turn",
-            rusqlite::params![child, parent, from_turn, to_turn],
+            "INSERT INTO requests (session, request, provider_id, model, usage_in, usage_cache_read, \
+                 usage_cache_write, usage_out) \
+             SELECT ?1, request, provider_id, model, usage_in, usage_cache_read, usage_cache_write, \
+                 usage_out FROM requests \
+             WHERE session = ?2 AND request IN (\
+                 SELECT DISTINCT request FROM blocks WHERE session = ?2 AND seq BETWEEN ?3 AND ?4)",
+            rusqlite::params![child, parent, from_seq, to_seq],
         )?;
+        // The copied sequences are not contiguous in the store, so a pointer is re-pointed by
+        // its rank among them, not by an offset: `next_seq + rank` names the child's copy of
+        // the block the pointer named. A pair is kept only when both pointers fall inside the
+        // copied range, because a pointer naming an uncopied block would name the parent's row
+        // from the child (R-session-37).
         tx.execute(
-            "INSERT INTO events (session, turn, ts, kind, payload)
-             SELECT ?1, turn, ts, kind, payload FROM events
-             WHERE session = ?2 AND turn BETWEEN ?3 AND ?4 ORDER BY seq",
-            rusqlite::params![child, parent, from_turn, to_turn],
+            "INSERT INTO blocks (session, request, ts, kind, payload, slot, state_start, state_end) \
+             SELECT ?1, request, ts, kind, payload, slot, \
+                 CASE WHEN state_start BETWEEN ?3 AND ?4 AND state_end BETWEEN ?3 AND ?4 THEN \
+                     ?5 + (SELECT count(*) FROM blocks AS r WHERE r.session = ?2 \
+                         AND r.seq BETWEEN ?3 AND ?4 AND r.seq < s.state_start) END, \
+                 CASE WHEN state_start BETWEEN ?3 AND ?4 AND state_end BETWEEN ?3 AND ?4 THEN \
+                     ?5 + (SELECT count(*) FROM blocks AS r WHERE r.session = ?2 \
+                         AND r.seq BETWEEN ?3 AND ?4 AND r.seq < s.state_end) END \
+             FROM blocks AS s WHERE s.session = ?2 AND s.seq BETWEEN ?3 AND ?4 ORDER BY seq",
+            rusqlite::params![child, parent, from_seq, to_seq, next_seq],
+        )?;
+        // The terminal reasons are re-stamped last, as the live path stamps them: the copied
+        // blocks land while their requests are open, so the trigger that refuses a block
+        // after its request's terminal sees what it saw the first time.
+        tx.execute(
+            "UPDATE requests SET reason = (\
+                 SELECT p.reason FROM requests p WHERE p.session = ?2 AND p.request = requests.request) \
+             WHERE session = ?1 AND request IN (\
+                 SELECT DISTINCT request FROM blocks WHERE session = ?2 AND seq BETWEEN ?3 AND ?4)",
+            rusqlite::params![child, parent, from_seq, to_seq],
         )?;
         tx.commit()?;
         Ok(())
@@ -480,11 +670,11 @@ impl Store {
             .flatten())
     }
 
-    /// Search the stored events, answered by the FTS5 index (R-session-10). The query is
-    /// FTS5 syntax, so a caller can name a column (`kind:"tool_call"`) or a phrase; a
+    /// Search the stored blocks, answered by the FTS5 index (R-session-10). The query is
+    /// FTS5 syntax, so a caller can name a column (`kind:"tool_use"`) or a phrase; a
     /// query with no match answers empty. Text typed by a user is not a query: `"`, `:`,
     /// `-` and parens are syntax, so the caller quotes it before it arrives here. Every
-    /// stored event is searched: the index mirrors the log row for row.
+    /// stored block is searched: the index mirrors the log row for row.
     pub fn search(&self, query: &str) -> Result<Vec<Hit>, Error> {
         let mut stmt = self.conn.prepare(SEARCH_SELECT)?;
         let rows = stmt
@@ -501,7 +691,7 @@ impl Store {
         Ok(rows)
     }
 
-    /// One JSON line per stored event, in log order (R-session-11). The payload goes out
+    /// One JSON line per stored block, in log order (R-session-11). The payload goes out
     /// as the text the store holds, so the export carries the store's rows and adds
     /// nothing to them. Writing an export reads the store and never writes it. An id that
     /// is not stored writes nothing and answers `Ok`. A line's keys arrive in the order
@@ -515,11 +705,14 @@ impl Store {
         while let Some(row) = rows.next()? {
             let line = serde_json::json!({
                 "session": session,
-                "turn": row.get::<_, i64>(0)?,
-                "seq": row.get::<_, i64>(1)?,
+                "seq": row.get::<_, i64>(0)?,
+                "request": row.get::<_, Option<i64>>(1)?,
                 "ts": row.get::<_, i64>(2)?,
                 "kind": row.get::<_, String>(3)?,
                 "payload": row.get::<_, String>(4)?,
+                "slot": row.get::<_, Option<String>>(5)?,
+                "state_start": row.get::<_, Option<i64>>(6)?,
+                "state_end": row.get::<_, Option<i64>>(7)?,
             });
             writeln!(w, "{line}").map_err(Error::Io)?;
         }
@@ -532,40 +725,20 @@ impl Store {
     pub fn total_changes(&self) -> u64 {
         self.conn.total_changes()
     }
+}
 
-    /// A run, as the store holds it (R-session-13): every turn of a session with its
-    /// state, its committed marker, and the events it produced, in log order. A turn
-    /// that produced no events arrives with an empty list, and an id that is not stored
-    /// answers empty. One query over the two tables, so a reader parses no format. No
-    /// range: every turn and every payload arrives
-    /// materialised, which a caller reading a window of a long session will bound.
-    pub fn run(&self, session: &str) -> Result<Vec<RunTurn>, Error> {
-        let mut stmt = self.conn.prepare(RUN_SELECT)?;
-        let mut rows = stmt.query(rusqlite::params![session])?;
-        let mut run: Vec<RunTurn> = Vec::new();
-        while let Some(row) = rows.next()? {
-            let turn: i64 = row.get(0)?;
-            // The log rows of one turn arrive in `seq` order after the state row, so a
-            // turn opens when its number arrives and closes when the next one does.
-            if run.last().is_none_or(|last| last.turn != turn) {
-                run.push(RunTurn {
-                    turn,
-                    state: row.get(1)?,
-                    committed: row.get::<_, i64>(2)? == 1,
-                    events: Vec::new(),
-                });
-            }
-            // A turn with no log rows arrives with NULL on the joined side.
-            if let (Some(kind), Some(payload)) = (
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, Option<String>>(5)?,
-            ) && let Some(last) = run.last_mut()
-            {
-                last.events.push((row.get::<_, i64>(3)?, kind, payload));
-            }
-        }
-        Ok(run)
-    }
+/// One row of the log, as the store answers it.
+fn stored_block(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredBlock> {
+    Ok(StoredBlock {
+        seq: row.get(0)?,
+        request: row.get(1)?,
+        ts: row.get(2)?,
+        kind: row.get(3)?,
+        payload: row.get(4)?,
+        slot: row.get(5)?,
+        state_start: row.get(6)?,
+        state_end: row.get(7)?,
+    })
 }
 
 impl Drop for Store {
@@ -582,11 +755,30 @@ impl Drop for Store {
 mod tests {
     use super::*;
 
-    /// R-session-02's teeth. The marker write is the transaction's last statement, and
-    /// `committed IN (0, 1)` is a real constraint, so a bad marker fails after the
-    /// events land. In a transaction nothing is stored. The same statements outside one
-    /// leave an event row and a state row, which is the second half: the mutation
-    /// check, kept as a test.
+    fn block<'a>(
+        session: &'a str,
+        request: Option<i64>,
+        kind: &'a str,
+        payload: &'a str,
+        ts: i64,
+    ) -> Block<'a> {
+        Block {
+            session,
+            request,
+            ts,
+            kind,
+            payload,
+            slot: None,
+            state_start: None,
+            state_end: None,
+        }
+    }
+
+    /// R-session-02's teeth. The batch's insert is one transaction, and the
+    /// `blocks_no_after_terminal` trigger refuses a block naming a request past its
+    /// terminal, so the refusal lands after the first row of the batch is inserted. In a
+    /// transaction nothing is stored. The same statements outside one leave the first
+    /// block, which is the second half: the mutation check, kept as a test.
     #[test]
     fn a_refused_write_at_the_end_of_a_commit_stores_nothing() {
         let stamp = std::time::SystemTime::now()
@@ -597,34 +789,53 @@ mod tests {
             std::env::temp_dir().join(format!("tau-storage-atomic-{}-{stamp}", std::process::id()));
         let mut store = Store::open(dir.join("state.db")).unwrap();
         store.open_session("s").unwrap();
-        let turn = Turn {
-            session: "s",
-            turn: 0,
-            state: "completed",
-            events: &[("a", "1", 11), ("b", "2", 12)],
-        };
-        assert!(store.commit_marked(&turn, 2).is_err());
-        assert_eq!(store.turn_state("s", 0).unwrap(), None);
-        assert!(store.events("s", 0).unwrap().is_empty());
+        store.open_request("s", 0, None, "m").unwrap();
+        store
+            .stamp_request("s", 0, None, None, None, None, "completed")
+            .unwrap();
+
+        let batch = [
+            block("s", None, "user_input", "1", 11),
+            block("s", Some(0), "assistant_text", "2", 12),
+        ];
+        assert!(store.commit_all(&batch).is_err());
+        assert!(store.run("s").unwrap().is_empty());
 
         let conn = &store.conn;
         conn.execute(
-            "INSERT INTO turn (session, turn, state) VALUES ('s', 1, 'completed')",
-            [],
+            BLOCK_INSERT,
+            rusqlite::params![
+                "s",
+                None::<i64>,
+                11,
+                "user_input",
+                "1",
+                None::<String>,
+                None::<i64>,
+                None::<i64>
+            ],
         )
         .unwrap();
-        conn.execute(EVENT_INSERT, rusqlite::params!["s", 1, 11, "a", "1"])
-            .unwrap();
         assert!(
             conn.execute(
-                "UPDATE turn SET committed = 2 WHERE session = 's' AND turn = 1",
-                []
+                BLOCK_INSERT,
+                rusqlite::params![
+                    "s",
+                    0,
+                    12,
+                    "assistant_text",
+                    "2",
+                    None::<String>,
+                    None::<i64>,
+                    None::<i64>
+                ]
             )
-            .is_err()
+            .is_err(),
+            "a terminal request has to refuse a block"
         );
         let left: i64 = conn
             .query_row(
-                "SELECT count(*) FROM events WHERE session = 's' AND turn = 1",
+                "SELECT count(*) FROM blocks WHERE session = 's'",
                 [],
                 |row| row.get(0),
             )
@@ -634,6 +845,160 @@ mod tests {
             "the probe has to leave a row when it runs without a transaction"
         );
 
+        drop(store);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R-session-37 and R-session-08's teeth: a fork remaps the state pointers it copies
+    /// by their rank among the copied sequences, so a child's block points inside the child.
+    #[test]
+    fn a_fork_moves_the_pointers_it_copies() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        let dir =
+            std::env::temp_dir().join(format!("tau-storage-fork-{}-{stamp}", std::process::id()));
+        let mut store = Store::open(dir.join("state.db")).unwrap();
+        store.open_session("p").unwrap();
+        store.open_request("p", 0, None, "m").unwrap();
+        store
+            .commit(&block("p", None, "user_input", "u", 11))
+            .unwrap();
+        store
+            .commit(&Block {
+                session: "p",
+                request: Some(0),
+                ts: 12,
+                kind: "assistant_text",
+                payload: "a",
+                slot: None,
+                state_start: Some(1),
+                state_end: Some(2),
+            })
+            .unwrap();
+        store
+            .stamp_request("p", 0, None, None, None, None, "completed")
+            .unwrap();
+
+        let parent_last = store.run("p").unwrap().last().unwrap().seq;
+        store.fork("p", "c", 1, parent_last).unwrap();
+
+        let copied = store.run("c").unwrap();
+        assert_eq!(copied.len(), 2);
+        assert_eq!(copied[1].state_start, Some(copied[0].seq));
+        assert_eq!(copied[1].state_end, Some(copied[1].seq));
+        assert_eq!(store.latest_request("c").unwrap().unwrap().request, 0);
+        assert_eq!(
+            store.parent("c").unwrap().as_deref(),
+            Some("p"),
+            "the child records the session it copied"
+        );
+
+        drop(store);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R-session-37's teeth, the shape a uniform offset gets wrong: the copied sequences are
+    /// not contiguous, so a pointer moves by its rank among them, and a pointer naming a
+    /// block the range leaves behind is dropped with its pair.
+    #[test]
+    fn a_fork_moves_the_pointers_across_a_gap() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        let dir = std::env::temp_dir().join(format!(
+            "tau-storage-fork-gap-{}-{stamp}",
+            std::process::id()
+        ));
+        let mut store = Store::open(dir.join("state.db")).unwrap();
+        store.open_session("p").unwrap();
+        store.open_session("x").unwrap();
+        store
+            .commit(&block("p", None, "user_input", "p1", 11))
+            .unwrap();
+        store
+            .commit(&block("x", None, "user_input", "x1", 12))
+            .unwrap();
+        store
+            .commit(&block("p", None, "user_input", "p2", 13))
+            .unwrap();
+        store
+            .commit(&block("x", None, "user_input", "x2", 14))
+            .unwrap();
+        store
+            .commit(&Block {
+                session: "p",
+                request: None,
+                ts: 15,
+                kind: "user_input",
+                payload: "p3",
+                slot: None,
+                state_start: Some(1),
+                state_end: Some(3),
+            })
+            .unwrap();
+
+        // The range from p's third block leaves block 1 behind, so the pair names no row of
+        // the child and the child records no state.
+        store.fork("p", "c", 3, 5).unwrap();
+        assert_eq!(
+            store.state("c").unwrap(),
+            None,
+            "the pair names a block the range leaves behind"
+        );
+
+        // Over all of p the copied sequences are 1, 3 and 5, so the pair (1, 3) names the
+        // child's copies of the blocks whose payloads are p1 and p2. The payload at each named
+        // sequence is the proof: a mapping that assigns the child's sequences in an order other
+        // than the parent's lands on the copy of a different block, and every shape-only check
+        // still passes.
+        store.fork("p", "d", 1, 5).unwrap();
+        let copied = store.run("d").unwrap();
+        assert_eq!(copied.len(), 3);
+        let (start, end) = store.state("d").unwrap().unwrap();
+        let named = |seq: i64| {
+            copied
+                .iter()
+                .find(|row| row.seq == seq)
+                .map(|row| row.payload.as_str())
+        };
+        assert_eq!(
+            (named(start), named(end)),
+            (Some("p1"), Some("p2")),
+            "a pointer lands on the child's copy of the block it named, not on the copy at its rank"
+        );
+
+        drop(store);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R-session-40's scoping. A request number is per session, so a stamp naming one
+    /// session's request 1 leaves another session's request 1 open: the number alone is not the
+    /// key, and a stamp that treats it as one closes a request that never finished and books its
+    /// counts to the wrong run.
+    #[test]
+    fn a_stamp_lands_on_the_session_it_names() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        let dir = std::env::temp_dir().join(format!("tau-scope-{}-{stamp}", std::process::id()));
+        let store = Store::open(dir.join("state.db")).unwrap();
+        for session in ["a", "b"] {
+            store.open_session(session).unwrap();
+            store.open_request(session, 1, Some("prov"), "m").unwrap();
+        }
+        store
+            .stamp_request("a", 1, Some(10), None, None, Some(2), "completed")
+            .unwrap();
+        let stamped = store.latest_request("a").unwrap().unwrap();
+        assert_eq!(stamped.reason.as_deref(), Some("completed"));
+        assert_eq!(stamped.usage_in, Some(10));
+        let other = store.latest_request("b").unwrap().unwrap();
+        assert_eq!(other.reason, None, "session b's request 1 is still open");
+        assert_eq!(other.usage_in, None, "a count of a's stamp landed on b");
         drop(store);
         fs::remove_dir_all(&dir).ok();
     }
