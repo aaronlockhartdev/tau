@@ -58,15 +58,17 @@ forms (`R-context-04`, `R-tools-16`, `R-tools-23`, `R-tools-28`, `R-surface-02`,
 committed changes/` finds those seven, counting `change_spec_requirements`, whose proposal states the retired
 committed marker as landing live; the matches in `_template`, `adopt_block_log`, `add_turn_loop`,
 `adopt_observational_memory` and `spike_gpui_surface` speak the new unit themselves, not the old one
-(R-workspace-08; gate doc lint)
+speak the new unit themselves, not the old one
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
 - [ ] sweep: the clause layout is the template's — obligation, `Acceptance:` and `Why:` adjacent, with no
-blank line between them. The live corpus has none; 69 clauses across the out-of-range deltas named above do,
-and the in-range deltas were re-formatted here. A clause whose `Acceptance:` sits in its own paragraph reads as a
-second obligation. `awk 'FNR==1{prev=""} /^Acceptance:/{if(prev=="")n++} {prev=$0} END{print n}' $(find changes -name "*.md" -not -path "*/archive/*")` counts them
-and reaches 0; the sweep re-formats them (gate doc lint)
+blank line between them. The live corpus has none, and no in-range delta does after this change.
+A clause whose `Acceptance:` sits in its own paragraph reads as a second obligation. `awk 'FNR==1{prev=""}
+/^Acceptance:/{if(prev=="" && pprev !~ /^###/) n++} {pprev=prev; prev=$0} END{print n}' $(find changes -name
+"*.md" -not -path "*/archive/*")` counts 66 today, all of them in the out-of-range deltas named above; the
+headings of `REMOVED` clauses are skipped, since a REMOVED block carries no obligation. The sweep takes
+those 66 and the count reaches 0 (spec-review check 11)
 - [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
 `spec/session/storage/spec.md` gains 8 requirements and retires 2; `spec/session/spec.md`'s storage leaf
 count and `spec/index.md`'s Corpus count move by the same numbers read off the files

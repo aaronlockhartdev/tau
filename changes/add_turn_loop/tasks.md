@@ -18,8 +18,9 @@ gate reports the new files
 - [ ] R-tools-31: the trait that runs a tool, declared in `tau-core`, with the stub tool implementing it; the
 scenario calls a tool through the trait and reads the result block it returns (@R-tools-31)
 - [ ] R-workspace-18: confirm `tau-core`'s graph carries no HTTP client after the trait lands
-- [ ] R-workspace-19: libraries emit on `EventSink`, a facade the frontend builds; the scenario opens a
-session through a stub sink and asserts every event of the run reaches it (@R-workspace-19)
+- [ ] R-workspace-19: a library emits log records through the `tracing` facade; the scenario runs a library
+call with a log layer captured in the test binary and asserts the record arrives through it
+(@R-workspace-19)
 - [ ] R-agent-01: the loop in `crates/tau-core/src/agent/`, committing a block at the stream's block stop
 - [ ] R-agent-02: deltas folded, never committed; the scenario counts commits
 - [ ] R-agent-03: the context built from the log and sent whole, with the stub asserting a full context on every request

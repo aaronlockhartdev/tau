@@ -70,9 +70,10 @@ survives restart`, and `A log row names a turn` to `A block names a live request
 
 Terms in `docs/glossary.md`: `block`, `request`, `injection`, `slot`, `user input`, `usage`, `terminal`
 and `state` added; `turn` and `committed marker` dropped; `log`, `run`, `session`, `steer` and
-`session start output` re-worded. Six open changes carry wording in the old unit —
-`add_subagent_support`, `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`,
-`adopt_context_file_loading`, `adopt_skills_convention` — and are re-worded by this change, or the
+`session start output` re-worded. Seven open changes carry wording in the old unit — `add_subagent_support`,
+`add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
+`adopt_skills_convention` and `change_spec_requirements`, whose proposal states the retired committed marker
+as landing live — and are re-worded by this change, or the
 corpus ships two vocabularies. `adopt_observational_memory` needs more than wording: its
 `R-session-19` promised to replace the oldest messages, and `R-session-31` refuses any update to a log
 row, so that clause now appends an observation block naming the range it supersedes. The

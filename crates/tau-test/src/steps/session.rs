@@ -579,7 +579,7 @@ async fn state_tables_hold_no_log(world: &mut World) {
     const MUTABLE: &[&str] = &["sessions", "turn"];
     // shortcut: this is today's schema, and a new mutable table is meant to fire the
     // guard by name. `adopt_observational_memory` lands observations and reflections as
-    // blocks in the log, in the `observations` slot, so it names no new mutable table;
+    // blocks in the log, in the `observations` and `reflections` slots, so it names no new mutable table;
     // a change that does add one names it here, and the scan covers it from that line on.
     let read = raw_conn(world).and_then(|conn| {
         let rows = conn
