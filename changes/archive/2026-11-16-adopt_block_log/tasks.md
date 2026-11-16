@@ -195,8 +195,8 @@ it — a false red, not a false green.
 - [x] archive: `spec -- archive adopt_block_log` ran; the leaf gained 8 (35..40, 45, 46) and retired 2
 (07, 30), so `spec/session/storage/spec.md` reads 25 requirements and `spec/index.md`'s corpus 33,
 both counted off the files. `add_turn_loop` lands after, and its 41..44 fill the gap this leaf leaves
-- [x] check: `cargo run -p tau-tools --bin gates` — 16 `run` rows PASS and the `ci lane` row `skipped (this lane)`, so all 17 rows in
-state `run` report; `live output under load`,
+- [x] check: `cargo run -p tau-tools --bin gates` — 17 `run` rows PASS, and the row whose command
+`--bin gates` reports `skipped (this lane)`, so every row reports; `live output under load`,
 `headless session` and `desktop` report `skipped (M0)`, `eval` reports `skipped (M0)`; the
 workspace layout row is checked by hand, and the lane runs 45 scenarios with 9 tau-core unit tests
 - [ ] spec-review (reviewer ticks)
