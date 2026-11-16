@@ -18,7 +18,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `reflection`: a condensation of observations.
 `tape`: a recorded model transcript that answers calls in place of a provider.
 `layer`: one of two levels, global and project; a nested guide is the project level's.
-`tail`: a session's newest messages; the transcript's tail block renders them.
+`tail`: a session's newest messages; the renderer re-parses the tail markdown block.
 `project`: the directory a session works in.
 `gate state`: the column saying who runs a row: `run` today, `manual` by an agent, `M0` never.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.

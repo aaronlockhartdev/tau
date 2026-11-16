@@ -63,6 +63,16 @@ struct Clause {
 }
 
 /// `R-<domain>-<NN>` splits at the last hyphen, so a hyphenated domain works.
+/// The number form `spec -- id` issues: two digits, zero-padded, until a domain
+/// passes 99. `R-tools-0007` is a distinct string that parses to the same number as
+/// `R-tools-07`, so it masks the duplicate check, hides an allocation gap, and
+/// inherits a withdrawal's acceptance waiver.
+fn is_issued_form(number: &str) -> bool {
+    number
+        .parse::<u32>()
+        .is_ok_and(|n| number == format!("{n:02}"))
+}
+
 fn split_id(id: &str) -> Option<(&str, &str)> {
     id.strip_prefix("R-")?.rsplit_once('-')
 }
@@ -212,10 +222,10 @@ fn stray_heading(line: &str) -> Option<&'static str> {
 fn heading_problems(cap: bool, clause: &Clause) -> Vec<String> {
     let head = clause.text.lines().next().unwrap_or_default();
     let mut out = Vec::new();
+    // A clause reaches here, so its hashes are followed by a space or a tab; only the
+    // indent is open to question. `stray_heading` reports the hash forms no scan reads.
     if head.starts_with(' ') || head.starts_with('\t') {
         out.push("a clause heading sits out of column 0".to_string());
-    } else if !(head.starts_with("### ") || head.starts_with("###\t")) {
-        out.push("a clause heading separates its hashes with no space".to_string());
     }
     let words = head.split_whitespace().skip(2).count();
     if cap && words > 6 {
@@ -462,8 +472,8 @@ fn check_cmd() -> i32 {
                 "domain {domain} has no directory under {SPEC_DIR}"
             ));
         }
-        if number.len() < 2 || number.len() > 4 || !number.bytes().all(|b| b.is_ascii_digit()) {
-            problems += report("number is not 2..4 digits");
+        if !is_issued_form(number) {
+            problems += report("number is not the form spec -- id issues, such as R-tools-07");
         }
         if let Some(first) = seen_spec.get(clause.id.as_str()) {
             problems += report(&format!("id already allocated in {first}"));
@@ -498,8 +508,8 @@ fn check_cmd() -> i32 {
                 "domain {domain} has no directory under {SPEC_DIR}"
             ));
         }
-        if number.len() < 2 || number.len() > 4 || !number.bytes().all(|b| b.is_ascii_digit()) {
-            problems += report("number is not 2..4 digits");
+        if !is_issued_form(number) {
+            problems += report("number is not the form spec -- id issues, such as R-tools-07");
         }
         if let Some(first) = seen_delta.get(clause.id.as_str()) {
             problems += report(&format!("id already allocated in {first}"));
@@ -974,7 +984,7 @@ fn archive_cmd(args: &[String]) -> i32 {
     }
 
     // Refuse before touching anything: spec/ and changes/ stay as they were.
-    let refusals = validate_plan(&plan);
+    let refusals = validate_plan(&plan, &live_ids());
     if !refusals.is_empty() {
         for refusal in refusals {
             eprintln!("spec: {refusal}");
@@ -1040,7 +1050,21 @@ fn archive_cmd(args: &[String]) -> i32 {
     0
 }
 
-fn validate_plan(plan: &[(PathBuf, Vec<Clause>)]) -> Vec<String> {
+/// Every clause id `spec/` holds, across all its files. R-harness-11 words the
+/// withdrawal as "spec/ holds no clause with its id", so the archive's probes read
+/// the corpus: an id live in another leaf is held, and a REMOVED clause naming it is
+/// a retirement, not a withdrawal.
+fn live_ids() -> BTreeSet<String> {
+    corpus_files()
+        .0
+        .iter()
+        .filter_map(|path| read_text(path).ok())
+        .flat_map(|text| clauses_in(SPEC_DIR, &text))
+        .map(|clause| clause.id)
+        .collect()
+}
+
+fn validate_plan(plan: &[(PathBuf, Vec<Clause>)], live: &BTreeSet<String>) -> Vec<String> {
     let mut refusals = Vec::new();
     for (target, clauses) in plan {
         // The same read the write path uses: a missing target is the new-file case, and
@@ -1054,6 +1078,17 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)]) -> Vec<String> {
             }
         };
         for clause in clauses {
+            // A number outside the issued form parses to a number already allocated, so it
+            // masks the duplicate check and the gap check, and lands in the corpus where
+            // `spec lint` reports it: refuse before the write.
+            if let Some((_, number)) = split_id(&clause.id)
+                && !is_issued_form(number)
+            {
+                refusals.push(format!(
+                    "{}: {} is not the number form spec -- id issues",
+                    clause.path, clause.id
+                ));
+            }
             // ADDED and MODIFIED headings land in the live corpus, where the lint counts
             // them, so archiving an over-cap heading would turn `spec lint` red: refuse.
             if clause.section.contains("ADDED") || clause.section.contains("MODIFIED") {
@@ -1079,7 +1114,7 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)]) -> Vec<String> {
                 ));
             } else if clause.section.contains("REMOVED")
                 && withdrawn(clause)
-                && clause_range(&text, &clause.id).is_some()
+                && live.contains(clause.id.as_str())
             {
                 // R-harness-11 waives the acceptance ref of a withdrawal, which retires an
                 // id spec/ no longer holds; a live clause is a retirement, which names a
@@ -1089,8 +1124,29 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)]) -> Vec<String> {
                     target.display(),
                     clause.id
                 ));
-            } else if (clause.section.contains("MODIFIED")
-                || (clause.section.contains("REMOVED") && !withdrawn(clause)))
+            } else if clause.section.contains("REMOVED")
+                && !withdrawn(clause)
+                && live.contains(clause.id.as_str())
+                && clause_range(&text, &clause.id).is_none()
+            {
+                // The rule lives in `spec/`, just not in the leaf this delta writes, so
+                // the delete would find nothing and the retirement would be dropped.
+                refusals.push(format!(
+                    "{}: {} names a clause spec/ holds, in a leaf this delta does not write",
+                    target.display(),
+                    clause.id
+                ));
+            } else if clause.section.contains("REMOVED")
+                && !withdrawn(clause)
+                && !live.contains(clause.id.as_str())
+            {
+                // A retirement (with `Supersedes:`) names a rule the corpus holds.
+                refusals.push(format!(
+                    "{}: no clause {} to remove; a withdrawal names an id spec/ does not hold",
+                    target.display(),
+                    clause.id
+                ));
+            } else if clause.section.contains("MODIFIED")
                 && clause_range(&text, &clause.id).is_none()
             {
                 refusals.push(format!(
@@ -1480,6 +1536,66 @@ mod tests {
         assert!(allocation_gaps(&live, &retired).is_empty());
     }
 
+    /// The ids `spec/` holds, as `validate_plan` probes them.
+    fn live(ids: &[&str]) -> BTreeSet<String> {
+        ids.iter().map(|id| (*id).to_string()).collect()
+    }
+
+    #[test]
+    fn the_removed_shapes_are_four_and_each_answers() {
+        let leaf = PathBuf::from("../../spec/session/storage/spec.md");
+        let removed = |supersedes: bool| {
+            format!(
+                "### R-session-02  A rule\nTHE SYSTEM SHALL x.{}",
+                if supersedes {
+                    "\nSupersedes: R-session-01"
+                } else {
+                    ""
+                }
+            )
+        };
+        let plan = |section: &str, supersedes: bool| {
+            vec![(
+                leaf.clone(),
+                vec![clause("R-session-02", section, &removed(supersedes))],
+            )]
+        };
+        let held: BTreeSet<String> = live(&["R-session-02"]);
+
+        // 1. A withdrawal: no Supersedes:, an id spec/ no longer holds. Waived.
+        assert_eq!(
+            validate_plan(&plan("## REMOVED Requirements", false), &live(&[])),
+            Vec::<String>::new()
+        );
+        // 2. The same shape naming an id the corpus holds: a retirement written as a
+        // withdrawal, and it would delete a rule with no replacement recorded.
+        assert_eq!(
+            validate_plan(&plan("## REMOVED Requirements", false), &held).len(),
+            1
+        );
+        // 3. A retirement, with Supersedes:, naming the clause its own target holds.
+        assert_eq!(
+            validate_plan(&plan("## REMOVED Requirements", true), &held),
+            Vec::<String>::new()
+        );
+        // 4. A retirement naming a rule the corpus holds elsewhere, and one naming
+        // nothing at all: both refuse, so the change cannot archive with the retirement
+        // silently dropped.
+        let elsewhere = vec![(
+            PathBuf::from("spec/session/never-exists/spec.md"),
+            vec![clause(
+                "R-session-02",
+                "## REMOVED Requirements",
+                &removed(true),
+            )],
+        )];
+        assert_eq!(validate_plan(&elsewhere, &held).len(), 1);
+        assert_eq!(
+            validate_plan(&plan("## REMOVED Requirements", true), &live(&[])).len(),
+            1
+        );
+    }
+
     #[test]
     fn a_withdrawal_names_no_clause_spec_holds() {
         // The withdrawal shape: REMOVED, no Supersedes:, an id spec/ does not hold.
@@ -1491,9 +1607,9 @@ mod tests {
                 "### R-session-07  A retired rule\nTHE SYSTEM SHALL x.",
             )],
         )];
-        assert_eq!(validate_plan(&withdrawal), Vec::<String>::new());
+        assert_eq!(validate_plan(&withdrawal, &live(&[])), Vec::<String>::new());
 
-        // The same shape naming a clause the live leaf holds: a retirement, and the
+        // The same shape naming a clause the corpus holds: a retirement, and the
         // archive refuses it rather than delete a rule with no replacement recorded.
         let retirement = [(
             // Read relative to the test's cwd (the crate root), so the live leaf opens.
@@ -1504,7 +1620,7 @@ mod tests {
                 "### R-session-02  A live rule\nTHE SYSTEM SHALL x.",
             )],
         )];
-        let refusals = validate_plan(&retirement);
+        let refusals = validate_plan(&retirement, &live(&["R-session-02"]));
         assert_eq!(refusals.len(), 1, "{refusals:?}");
         assert!(
             refusals[0].contains("names a clause spec/ holds")
@@ -1523,7 +1639,7 @@ mod tests {
                 "### R-session-02  A name\nTHE SYSTEM SHALL x.\n```\nexample",
             )],
         )];
-        let refusals = validate_plan(&plan);
+        let refusals = validate_plan(&plan, &live(&[]));
         assert_eq!(refusals.len(), 1, "{refusals:?}");
         assert!(refusals[0].contains("unclosed code fence"), "{refusals:?}");
         // A closed pair is the shape a clause carries an example in.
@@ -1535,7 +1651,7 @@ mod tests {
                 "### R-session-02  A name\nTHE SYSTEM SHALL x.\n```\nexample\n```",
             )],
         )];
-        assert_eq!(validate_plan(&ok), Vec::<String>::new());
+        assert_eq!(validate_plan(&ok, &live(&[])), Vec::<String>::new());
     }
 
     #[test]
@@ -1566,7 +1682,7 @@ mod tests {
                 "### R-session-02  A heading with eight words in its name here\nTHE SYSTEM SHALL x.",
             )],
         )];
-        let refusals = validate_plan(&plan);
+        let refusals = validate_plan(&plan, &live(&[]));
         assert_eq!(refusals.len(), 1, "{refusals:?}");
         assert!(refusals[0].contains("the cap is 6"), "{refusals:?}");
     }
@@ -1589,7 +1705,7 @@ mod tests {
                 ),
             ],
         )];
-        let refusals = validate_plan(&plan);
+        let refusals = validate_plan(&plan, &live(&[]));
         // The withdrawal has no clause in `spec/` to delete. The retirement and the
         // modification each name a rule the target file has to hold.
         assert_eq!(refusals.len(), 2, "{refusals:?}");

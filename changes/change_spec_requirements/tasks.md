@@ -14,8 +14,6 @@
 - [x] check: spec --check · contracts --check · steps --check · doc lint · links
 - [ ] archive: after `add_turn_loop`, whose R-agent-15 scenario carries `@R-workspace-08`
 - [x] Implement: `<project>/.tau/.gitignore` containing `*`, written once, and the store path inside `.tau` (`crates/tau-core/src/project.rs`; scenarios `@R-workspace-06,07` in crates/tau-test/tests/features/workspace.feature, `@R-session-18` in crates/tau-test/tests/features/session.feature)
-- [ ] R-workspace-08: `Project::disclosure()` returns the line naming the write, and the scenario that prints it
-is `add_turn_loop`'s `R-agent-15`, tagged `@R-workspace-08`
 - [x] docs: the six-word heading cap, swept across the open deltas: 17 ADDED headings re-worded
 (`add_subagent_support` 9, `add_surface_components` 3, `add_user_config` 2, `add_test_lanes` 1,
 `adopt_hash_anchor_editing` 1, `adopt_skills_convention` 1); the ids are listed at
@@ -30,4 +28,7 @@ twelve open changes state no clause IDs, `add_turn_loop` listing its claims unde
 - [ ] docs: the clause-layout sweep `adopt_block_log` carried here — obligation, `Acceptance:` and
 `Why:` adjacent, no blank line between them; the count and the per-change split are in
 `changes/archive/2026-11-16-adopt_block_log/tasks.md`
+- [ ] R-workspace-08: the scenario that prints the disclosure line in session start output; `Project::disclosure()`
+returns it (`crates/tau-core/src/project.rs`) and `@R-workspace-08` is tagged, so the print lands with
+`add_turn_loop`'s `R-agent-15`
 - [ ] spec-review (reviewer ticks)
