@@ -1464,6 +1464,41 @@ async fn fork_holds_the_copy(world: &mut World) {
                         request.request
                     ));
                 }
+                // The copy carries the round-trip's record, not only its number. A fork that
+                // drops the provider, the model or a count loses it in the child, where no
+                // block read shows the gap.
+                if request.provider_id.as_deref() != Some(PROVIDER_ID) {
+                    findings.push(format!(
+                        "the fork's request names {:?} as its provider, expected {PROVIDER_ID}",
+                        request.provider_id
+                    ));
+                }
+                if request.model != MODEL {
+                    findings.push(format!(
+                        "the fork's request records {}, expected {MODEL}",
+                        request.model
+                    ));
+                }
+                for (name, got, want) in [
+                    ("usage_in", request.usage_in, Some(USAGE_IN)),
+                    (
+                        "usage_cache_read",
+                        request.usage_cache_read,
+                        Some(USAGE_CACHE_READ),
+                    ),
+                    (
+                        "usage_cache_write",
+                        request.usage_cache_write,
+                        Some(USAGE_CACHE_WRITE),
+                    ),
+                    ("usage_out", request.usage_out, Some(USAGE_OUT)),
+                ] {
+                    if got != want {
+                        findings.push(format!(
+                            "the fork's request {name} is {got:?}, expected {want:?}"
+                        ));
+                    }
+                }
                 // The copied request carries its terminal, so the child continues on a
                 // new request rather than appending to a round-trip that is over.
                 if request.reason.as_deref() != Some(REASON) {

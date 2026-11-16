@@ -9,7 +9,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
 `invariant`: a rule in `spec/index.md` or a domain index, with the check that proves it.
 `root`: tau's user file root, `~/.tau`; XDG config home overrides the config path.
-`fork`: a child session that copies the parent's history and prompt cache.
+`fork`: a child session that copies a range of the parent's blocks and their requests.
 `steer`: send input to a running child, stored as a block in its log.
 `roster`: the view listing a session's children with their states.
 `config layer`: the global config file, or the project file merged over it key by key.
@@ -40,3 +40,5 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `log`: the `blocks` table — every block, append-only, one row each.
 `session`: one running agent's stored conversation: its row, its requests, its blocks.
 `checkpoint`: WAL frames copied into the store file; `TRUNCATE` empties the WAL.
+`context`: the blocks a request sends to the provider, named by a block's state pointers.
+`JSONL`: the export format: one JSON object per line, one line per block.

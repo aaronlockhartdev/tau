@@ -24,9 +24,10 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-10: the FTS index over `blocks`, with the search scenarios unchanged in result
 - [x] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
 - [x] The mutable-state read — `MUTABLE` in `crates/tau-test/src/steps/session.rs` — names `sessions`
-it names `sessions` and `requests` after this change, and R-session-03's clause says the two by name
-- [x] R-session-13: the harness read answers from store queries over blocks, and `RunTurn`'s per-turn state
-is dropped
+  and `requests`, the tables a store setup migrates, so the setup-race scenarios watch both
+- [x] R-session-13: the store side answers a run from queries over blocks, proved by the lane's
+  harness-read step over `run` and `latest_request`; the `eval` bin and its suite file are the
+  `manual` row of `AGENTS.md`, so the harness has no run gate that proves it end to end
 - [x] R-session-28: the event time lands on the block row
 - [x] R-session-31: the update and delete triggers name `blocks`
 - [x] R-session-32: the composite FK to `requests`, and the orphan-row refusal
@@ -39,12 +40,14 @@ is dropped
 - [x] R-session-37, R-session-08: a fork re-points a state by the pointer's rank among the copied
   sequences, and drops a pair naming a block the range leaves behind. Scenarios fork over the whole
   range and over part of it; `a_fork_moves_the_pointers_across_a_gap` forks across a gap another
-  session left (mutation: mapping by `seq + (next - from)` answers `left: (Some("p1"), Some("p3"))
-  right: (Some("p1"), Some("p2"))` — the pointer lands on the child's copy of a block it did not name)
+  session left (mutation: mapping by `seq + (next - from)` fails the equality with
+  `left: (Some("p1"), Some("p3"))` and `right: (Some("p1"), Some("p2"))` on their own lines — the
+  pointer lands on the child's copy of a block the parent never named)
 - [x] R-session-40: `stamp_request` writes the terminal once — the statement carries
   `AND reason IS NULL`, and no row is `Error::Terminal`. A scenario stamps twice and reads the
-  first counts back (mutation: dropping the guard answers `a second terminal stamped over the
-  first; the reason is Some("refusal"), expected "completed"`)
+  first counts back (mutation: dropping the guard answers `the first terminal answers its counts
+  and its reason: a second terminal stamped over the first; the reason is Some("refusal"),
+  expected "completed"`)
 - [x] R-session-40: the stamp is scoped to its session, and each usage count rides its own column.
   `a_stamp_lands_on_the_session_it_names` stamps one session's request 1 and reads the other session's
   request 1 open (mutation: dropping `session = ?1` answers `session b's request 1 is still open`); a
@@ -58,12 +61,24 @@ is dropped
   nothing at its end: `the block whose state ends on no block was written`. A start naming nothing
   while the end names a row needs a gap in the session's sequences, so
   `a_state_pointer_whose_start_names_nothing_is_refused` covers it; neutering the start disjunct is
-  caught by that test and nothing else. The `CHECK` fires before the `AFTER INSERT` trigger, so the
-  probe that printed each shape's refusal is what settled which guard answers which pair
+  caught by that test and nothing else. A pointer into a sibling session's sequence needs two
+  sessions and a sequence only one of them owns, so
+  `a_state_pointer_into_another_session_is_refused` covers it; dropping the trigger's
+  `b.session = NEW.session` is caught by that test and the start-arm test, and by nothing in the
+  lane. The `CHECK` fires before the `AFTER INSERT` trigger — measured, not read from
+  documentation — so a half pair, a backwards pair and an end naming nothing land on the `CHECK`,
+  and a start naming nothing with a whole end lands on the trigger
 - [x] R-session-36: the request row records its provider, model, counts and reason, and no payload: a
   scenario reads `pragma_table_info('requests')` and refuses the column's presence
 - [x] lane: a scenario that opens on a `When` clears `world.findings` itself, so a setup scenario
   cannot fail by quoting the scenario before it
+- [x] R-session-08: the copied request row carries its provider, model and four counts, not only its
+  number and terminal (mutation: copying number and model alone answers `the fork's request names
+  None as its provider, expected lane-request-1; the fork's request usage_in is None, expected
+  Some(120); the fork's request usage_cache_read is None, expected Some(900); …`)
+- [x] R-session-39: the clause states the narrow read's scope — the newest request and the blocks
+  that follow it — because what a read costs in payloads is not observable through the store's API,
+  and the scenario counts the rows each read answers
 - [x] R-session-40: `crash_store`'s `blocks` mode commits the blocks and stops before the stamp;
   a scenario kills in that window, and the reopen reads every block with an open request that a
   further block names
@@ -89,11 +104,12 @@ the clause; `blocks` immutability is R-session-31's
   `steer`, `event time` and `session start output`. The live cells named `events`, turns and the
   committed marker, the unit this change retires
 - [x] docs: `docs/stack.md` Storage row names `blocks` and `requests`, the state as a pair of
-  pointers, the clause ranges 01..08, 10, 11, 13, 18, 28..46, and the vocabularies' home in
-  `tau-protocol`, generated into `contracts/` (R-session-29, 30)
+  pointers into the log, and the ranges the storage leaf covers: R-session-01..06, 08, 10, 11, 13,
+  18, 28..46, with 07 and 30 retiring at this change's archive and 41..44 landing from
+  `add_turn_loop`
 - [x] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:66` and `:74` cite R-workspace-04, a clause
-  `change_spec_requirements` issues and that goes live at its archive; each comment marks the clause
-  pending, and the citation stays (R-workspace-04)
+  `change_spec_requirements` issues and that goes live at its archive; the comments cite the clause
+  where it applies and carry no marker of their own, and the citation stays (R-workspace-04)
 - [ ] docs: sweep the deltas this change does not re-format: bare `## ADDED` markers to `## ADDED Requirements`
 (`add_subagent_support` 4 leaves, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
 `adopt_hash_anchor_editing`, `adopt_skills_convention`); headings over the six-word cap (`R-config-01`,
@@ -101,7 +117,7 @@ the clause; `blocks` immutability is R-session-31's
 `R-surface-21`, `R-tools-02`, `R-tools-06`, `R-tools-07`, `R-tools-09`, `R-tools-11`, `R-tools-14`,
 `R-tools-28`, `R-harness-04`); the `THE SYSTEM SHALL NOT` obligations that sit outside the five EARS
 forms (`R-context-04`, `R-tools-16`, `R-tools-23`, `R-tools-28`, `R-surface-02`, `R-harness-08`); and the
-`Apply to` line naming the live leaf each delta applies to, missing from those same 9 deltas
+`Apply to` line naming the live leaf each delta applies to, missing from those six deltas
 - [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
 `adopt_skills_convention` and `change_spec_requirements` (its proposal states the retired committed marker as

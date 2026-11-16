@@ -631,13 +631,15 @@ impl Store {
         // its rank among them, not by an offset: `next_seq + rank` names the child's copy of
         // the block the pointer named. A pair is kept only when both pointers fall inside the
         // copied range, because a pointer naming an uncopied block would name the parent's row
-        // from the child (R-session-37). Two shapes worth naming. The range test on `state_end`
-        // is implied, not tested: a copied row's pointers name blocks at or before its own
-        // sequence, so a start inside the range puts its end inside too, and no fork can carry
-        // a pair that straddles the range's end. `ORDER BY seq` is load-bearing, not
-        // decoration: the copies take their child sequences in insert order, and the rank is
-        // only the mapping when that order is the parent's. The payload check in the gap test
-        // is the read that lands on the copy of a different block if the order goes.
+        // from the child (R-session-37). Two notes. The range test on `state_end` is implied and
+        // unobserved: a pointer names a block at or before the row that carries it, so for a
+        // copied row the end is bounded by the range's end just as the start is, and deleting the
+        // test leaves every unit test and every scenario green (measured). It stays because the
+        // CASE then reads as the rule it enforces. `ORDER BY seq` is load-bearing, not
+        // decoration: the copies take their child sequences in insert order, so the rank is the
+        // mapping only when that order is the parent's. SQLite's unordered scan of this SELECT
+        // answers in rowid order, so removing it is green on this engine; the payload check in
+        // the gap test is the read that names the copy of a different block if the order moves.
         tx.execute(
             "INSERT INTO blocks (session, request, ts, kind, payload, slot, state_start, state_end) \
              SELECT ?1, request, ts, kind, payload, slot, \
@@ -1054,6 +1056,50 @@ mod tests {
         assert_eq!(
             store.run("p").unwrap().len(),
             2,
+            "the refused block stored nothing"
+        );
+        drop(store);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R-session-37's scoping. A sequence is a store-wide number, so a pointer naming a row of
+    /// another session names nothing in the session that carries it. The trigger's
+    /// `b.session = NEW.session` is the guard: drop it and the block stores, carrying a pointer
+    /// into a sibling's log that no read of the carrying session can answer.
+    #[test]
+    fn a_state_pointer_into_another_session_is_refused() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        let dir =
+            std::env::temp_dir().join(format!("tau-state-scope-{}-{stamp}", std::process::id()));
+        let mut store = Store::open(dir.join("state.db")).unwrap();
+        store.open_session("p").unwrap();
+        store.open_session("x").unwrap();
+        store
+            .commit(&block("p", None, "user_input", "p1", 11))
+            .unwrap();
+        // Sequence 1 is p's. For x the pointer names nothing.
+        let err = store
+            .commit(&Block {
+                session: "x",
+                request: None,
+                ts: 12,
+                kind: "user_input",
+                payload: "x1",
+                slot: None,
+                state_start: Some(1),
+                state_end: Some(1),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("a state pointer names no block of the session"),
+            "the session scoping answered: {err}"
+        );
+        assert_eq!(
+            store.run("x").unwrap().len(),
+            0,
             "the refused block stored nothing"
         );
         drop(store);
