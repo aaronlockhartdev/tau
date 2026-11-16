@@ -116,7 +116,7 @@ fn clauses_in(path: &str, text: &str) -> Vec<Clause> {
         if fenced[idx] {
             continue;
         }
-        let Some(head) = line.strip_prefix("### ") else {
+        let Some(head) = line.trim_start().strip_prefix("### ") else {
             continue;
         };
         let id = head.split_whitespace().next().unwrap_or("");
@@ -124,7 +124,10 @@ fn clauses_in(path: &str, text: &str) -> Vec<Clause> {
             continue;
         }
         let mut end = idx + 1;
-        while end < lines.len() && !(lines[end].starts_with('#') && !fenced[end]) {
+        while end < lines.len()
+            && !((lines[end].starts_with('#') || lines[end].trim_start().starts_with("### "))
+                && !fenced[end])
+        {
             end += 1;
         }
         let section = lines[..idx]
@@ -146,6 +149,24 @@ fn clauses_in(path: &str, text: &str) -> Vec<Clause> {
             text: lines[idx..end].join("\n"),
             acceptance,
         });
+    }
+    out
+}
+
+/// The heading shape rules, read off the clause's own first line: `spec-authoring`
+/// sets `### R-<domain>-<NN>  <name <=6 words>` at column 0. A clause the scanner
+/// skipped would escape every other check, so an indented heading is reported, in
+/// deltas too. The word cap is checked on the live corpus only: the delta sweep
+/// that brings the open changes to it is a task of `change_spec_requirements`.
+fn heading_problems(cap: bool, clause: &Clause) -> Vec<String> {
+    let head = clause.text.lines().next().unwrap_or_default();
+    let mut out = Vec::new();
+    if !head.starts_with("### ") {
+        out.push("a clause heading sits out of column 0".to_string());
+    }
+    let words = head.split_whitespace().skip(2).count();
+    if cap && words > 6 {
+        out.push(format!("heading name is {words} words, the cap is 6"));
     }
     out
 }
@@ -385,6 +406,9 @@ fn check_cmd() -> i32 {
         } else {
             seen_spec.insert(&clause.id, &clause.path);
         }
+        for msg in heading_problems(true, clause) {
+            problems += report(&msg);
+        }
         problems += check_acceptance(
             clause,
             &gates,
@@ -426,6 +450,9 @@ fn check_cmd() -> i32 {
                 .is_some_and(|nums| nums.contains(&n))
         });
         if !is_withdrawn {
+            for msg in heading_problems(false, clause) {
+                problems += report(&msg);
+            }
             problems += check_acceptance(
                 clause,
                 &gates,
@@ -1059,13 +1086,20 @@ fn clause_range(text: &str, id: &str) -> Option<Range<usize>> {
     let mut start = 0;
     for (idx, line) in lines.iter().enumerate() {
         if !fenced[idx]
-            && line.starts_with("### ")
-            && line.trim_start_matches('#').split_whitespace().next() == Some(id)
+            && line.trim_start().starts_with("### ")
+            && line
+                .trim_start()
+                .trim_start_matches('#')
+                .split_whitespace()
+                .next()
+                == Some(id)
         {
             let mut end = text.len();
             let mut offset = start + line.len();
             for (j, next) in lines[idx + 1..].iter().enumerate() {
-                if !fenced[idx + 1 + j] && next.starts_with('#') {
+                if !fenced[idx + 1 + j]
+                    && (next.starts_with('#') || next.trim_start().starts_with("### "))
+                {
                     end = offset;
                     break;
                 }
@@ -1134,6 +1168,34 @@ mod tests {
             text: text.to_string(),
             acceptance: "gate workspace layout".to_string(),
         }
+    }
+
+    #[test]
+    fn a_heading_out_of_column_zero_is_reported() {
+        let ok = clause(
+            "R-tools-01",
+            "## Requirements",
+            "### R-tools-01  Six word name here ok",
+        );
+        assert!(heading_problems(true, &ok).is_empty());
+        let long = clause(
+            "R-tools-02",
+            "## Requirements",
+            "### R-tools-02  seven word name over the cap now",
+        );
+        assert_eq!(
+            heading_problems(true, &long),
+            ["heading name is 7 words, the cap is 6"]
+        );
+        let indented = clause(
+            "R-tools-03",
+            "## Requirements",
+            "    ### R-tools-03  Indented",
+        );
+        assert_eq!(
+            heading_problems(true, &indented),
+            ["a clause heading sits out of column 0"]
+        );
     }
 
     #[test]

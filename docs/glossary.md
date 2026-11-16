@@ -3,7 +3,7 @@
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
 `gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
-`lane`: a runner with a fixed scope: the ci lane, unit and surface, behaviour, eval.
+`lane`: a runner with a fixed scope; its name is a gate row's name.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
@@ -12,10 +12,9 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `fork`: a child session that copies a range of the parent's blocks and their requests.
 `steer`: send input to a running session, stored as a block in its log.
 `roster`: the view listing a session's children with their states.
-`config layer`: the `layer` a config file sits at.
 `anchor`: the five-character handle a read serves for one line of one file.
 `outline`: a file's anchored declaration rows, bodies read on demand.
-`observation`: a condensation of a session's oldest messages, appended to its observations slot.
+`observation`: a condensation of a session's oldest messages, filling a context slot.
 `reflection`: a condensation of observations.
 `tape`: a recorded model transcript that answers calls in place of a provider.
 `layer`: one of two levels a config, context, or skill file sits at, global and project.
