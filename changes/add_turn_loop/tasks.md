@@ -55,7 +55,8 @@ Of the terms the storage and surface clauses lean on, `write connection` and `fr
 `change_spec_requirements`, which archives on the scenario `@R-agent-15` writes; at archive the counts move
 by what the deltas add — `spec/agent/spec.md` +15, `spec/protocol/spec.md` +3, `spec/tools/spec.md` +2,
 `spec/workspace/spec.md` +4, `spec/session/storage/spec.md` +4 — read off the files, with
-`spec/session/spec.md`'s leaf cell and `spec/index.md`'s Corpus count moved to match
+`spec/session/spec.md`'s leaf cell, `spec/tools/spec.md`'s count cell (its delta is a domain index, so its
+Leaves cell stays `none`), and `spec/index.md`'s Corpus count moved to match
 - [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool, spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies current, no local state tracked, toolchain pinned, core has no UI logic, core has no runtime, core spawns nothing, core has no HTTP client, core installs no subscriber, lints); rows in state M0 — live output under load, headless session, desktop, eval (never CI) — reported `skipped (M0)`; the manual row — workspace layout — reported by hand
 - [ ] docs: this change's prose says "the turn loop" for the loop it builds; the corpus unit is a
 block and the round-trip is a request, so its proposal and delta read "the request loop". The

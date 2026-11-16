@@ -84,12 +84,13 @@ A decision worth keeping past the session lands in `spec/` through a change; pro
 
 ## 6. Archive
 
-`archive` refuses a delta whose clause has a number `spec -- id` never issues, sits under no marker, names
-no live clause to change, repeats an id `spec/` holds anywhere, retires an id `spec/` holds in a leaf the
-delta does not write, withdraws (no `Supersedes:`) an id `spec/` holds, accepts an `@R-…` ref no scenario
-tag carries, or hides a heading no scan reads; for an ADDED or MODIFIED clause, also a heading over the
-six-word cap, out of column 0, or with an unclosed fence in its own text, and for any target leaf, one whose
-fences never close. That tag check is shape, not history: whether a ref has *run* is a reviewer's call, and
-the tool reads no run ledger.
+`archive` refuses a delta whose clause has a number in a form `spec -- id` never issues, sits under no
+marker, names no live clause to change, repeats an id `spec/` holds anywhere, retires an id `spec/` holds in
+a leaf the delta does not write, withdraws (no `Supersedes:`) an id `spec/` holds, or hides a heading no scan
+reads; for an ADDED or MODIFIED clause, also an `@R-…` ref no scenario tag carries, a heading over the
+six-word cap, a heading out of column 0, or an unclosed fence in its own text; and for any target leaf, one
+whose fences never close. The tag check is shape, not history: whether a ref has *run* is a reviewer's call,
+and the tool reads no run ledger. A hand-picked number in the issued form is not refused: the corpus check
+(`--check`) is what reddens a vacated slot, so take the number `spec -- id` prints.
 `cargo run -p tau-tools --bin spec -- archive <id>` applies the deltas into `spec/` and moves the change to `changes/archive/<YYYY-MM-DD>-<id>/`.
 Archive creates `spec/<domain>/spec.md` when the delta names a domain that has no file yet. Archive is append-only: never edited afterwards. New facts are a new change.

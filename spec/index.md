@@ -3,7 +3,7 @@
 Cross-cutting invariants live here and are never restated in a domain:
 
 - Core carries no user-interface logic: no UI crate, no frontend crate. Frontends: `crates/tau-app` (GPUI), `crates/tau-acp`. Proof: gate `core has no UI logic`.
-- Every requirement has an allocated `R-<domain>-<NN>` and an acceptance ref: a scenario in `crates/tau-test/tests/features/` tagged with it, or a named gate when the rule constrains a build fact. Proof: spec lint (IDs, refs) and the behaviour lane.
+- Every requirement has an allocated `R-<domain>-<NN>` and an acceptance ref: a scenario in `crates/tau-test/tests/features/` tagged with it, a named gate when the rule constrains a build fact, or a `spec-review` check when only a review can observe it. Proof: spec lint (IDs, refs) and the behaviour lane.
 - Wire shapes live in Rust types; `contracts/` is generated, never hand-edited. Proof: gate `contracts current`, which compares an empty generated set until `add_turn_loop`'s R-protocol-02 lands, so the proof has no teeth today.
 - Real-LLM eval is run by hand when deciding whether a feature is worth building; never in CI. Proof: spec-review check 14.
 - Live output is independent of storage: frontends consume core's in-memory event stream, rendering reads no storage, and no storage write, checkpoint, or reader gates emission. Proof: gate `live output under load`, an `M0` row that runs nowhere today.

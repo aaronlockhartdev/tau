@@ -194,6 +194,9 @@ and `-P ci` selects a profile by name.
 and in the other direction: `core spawns nothing` greps prose too, so a comment naming `.spawn(`
 reddens
 it — a false red, not a false green.
+`spec lint` will carry R-harness-11's waiver (a `## REMOVED` clause with no `Supersedes:` and no live id
+needs no acceptance ref) once a delta writes a `## REMOVED` clause; no open delta has one, so that row
+answers zero clauses today and the waiver's teeth are the unit tests under `unit + surface`.
 
 - [x] archive: `spec -- archive adopt_block_log` ran; the leaf gained 8 (35..40, 45, 46) and retired 2
 (07, 30), so `spec/session/storage/spec.md` reads 25 requirements and `spec/index.md`'s corpus 33,
