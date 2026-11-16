@@ -13,11 +13,12 @@ call, and the schema has no word for the call. The turn loop needs that word: a 
 reasoning, text, and several tool calls, and each of those closes at its own moment on the wire.
 
 The provider stream is block-shaped. Anthropic streams `message_start`, `content_block_start`,
-`content_block_delta`, `content_block_stop` (platform.claude.com, read 2026-11-15); the Responses API
-streams output items with `added`/`delta`/`done` per part and reports true usage only in
-`response.completed` (community.openai.com field guide, 53 event types, read 2026-11-15). Chat
+`content_block_delta`, `content_block_stop`
+(<https://platform.claude.com/docs/en/api/streaming>, read 2026-11-15); the Responses API streams
+output items with `added`/`delta`/`done` per part and reports true usage only in `response.completed`
+(<https://developers.openai.com/api/docs/guides/migrate-to-responses>, read 2026-11-15). Chat
 Completions closes every block at `finish_reason` in one batch, and reports usage only in a final
-chunk, when asked (developers.openai.com reference, read 2026-11-15).
+chunk, when asked (<https://developers.openai.com/api/reference>, read 2026-11-15).
 
 State cannot be bytes on a mutable row: R-session-03's scan flags log content that appears in a
 mutable table, and R-session-10's Why rules derived structures to be rebuilt, not reconciled.

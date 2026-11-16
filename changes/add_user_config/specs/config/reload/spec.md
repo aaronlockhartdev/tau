@@ -1,6 +1,6 @@
 # Delta: config/reload
 
-## ADDED
+## ADDED Requirements Requirements
 
 ### R-config-01  One root for a user's global files
 
@@ -79,7 +79,7 @@ WHEN a config file at either layer changes on disk THE SYSTEM SHALL rebuild the 
 
 Acceptance: @R-config-12
 
-### R-config-13  The key list lives in the spec
+### R-config-13  The spec lists every key
 
 THE SYSTEM SHALL list every config key with its default in `spec/config/reload/spec.md`, the queue cap, the
 token budget, the wall clock limit, the repeated-tool-call stop, the observation and reflection thresholds

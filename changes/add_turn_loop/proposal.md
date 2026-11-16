@@ -2,10 +2,10 @@
 
 ## Context
 
-No clause in the corpus names a model request. The provider client is an unspecced I/O leaf, and the
-turn loop that would drive it exists in no spec: `Store::commit`, `run`, `export_jsonl` and `fork` are
-called only by lane steps, and `changes/change_spec_requirements/proposal.md` cannot archive because
-R-workspace-08's acceptance `@R-workspace-08` has no scenario — nothing prints session start output.
+No provider client exists, and no turn loop that would drive it is specced: `Store::commit`, `run`,
+`export_jsonl` and `fork` are called only by lane steps, and
+`changes/change_spec_requirements/proposal.md` cannot archive because R-workspace-08's acceptance
+`@R-workspace-08` has no scenario — nothing prints session start output.
 
 `adopt_async_core` (archived 2026-11-15) decided the shape this change inherits: core speaks futures,
 carries no runtime (R-workspace-14) and starts no task, thread, pool, reactor, future driver, or child
@@ -17,10 +17,12 @@ the block row.
 The record decides most of the loop's shape. Anthropic reports input and cache tokens at
 `message_start` and the stop reason at `message_delta`; the Responses API reports true usage only in
 `response.completed` and closes every item at its `done`; Chat Completions closes all blocks at
-`finish_reason` and reports usage in a final chunk only when asked (platform.claude.com and
-developers.openai.com, read 2026-11-15). The provider's own stored conversation state expires —
-responses are kept 30 days by default, and the documented fallback for an unresolvable id is to send
-full input context (developers.openai.com conversation-state guide, read 2026-11-15).
+`finish_reason` and reports usage in a final chunk only when asked
+(<https://platform.claude.com/docs/en/api/streaming> and
+<https://developers.openai.com/api/reference>, read 2026-11-15). The provider's own stored conversation
+state expires — responses are kept 30 days by default, and the documented fallback for an unresolvable id
+is to send full input context (<https://developers.openai.com/api/docs/guides/conversation-state>,
+read 2026-11-15).
 
 The loop is where a session's context is assembled, so it is also where an injection becomes a record.
 
@@ -69,7 +71,7 @@ plus one per block, each a transaction. Contention is measured — 300 commits e
 commit 41 ms at `busy_timeout` 5 s (`changes/archive/2026-11-15-add_session_storage/tasks.md`) — cost is not.
 Tokens: the context is resent whole every request, priced by prefix caching, where one write and nine
 reads cost 2.15× the input against 10× uncached — 1.25× a cache write and 0.1× a cache read
-(platform.claude.com prompt-caching page, read 2026-11-15).
+(<https://platform.claude.com/docs/en/build-with-claude/prompt-caching>, read 2026-11-15).
 Eval: none needed. The mechanics are lane-testable against the stub; conversation quality is the eval
 lane's question, and that gate row is `manual` with no suite file to run.
 

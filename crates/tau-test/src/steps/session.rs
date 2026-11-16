@@ -578,9 +578,9 @@ async fn state_tables_hold_no_log(world: &mut World) {
     // value never splits where a payload does not.
     const MUTABLE: &[&str] = &["sessions", "turn"];
     // shortcut: this is today's schema, and a new mutable table is meant to fire the
-    // guard by name. `adopt_observational_memory` adds observation and reflection
-    // tables to the same store; whoever lands it names them here, and the scan covers
-    // them from that line on.
+    // guard by name. `adopt_observational_memory` lands observations and reflections as
+    // blocks in the log, in the `observations` slot, so it names no new mutable table;
+    // a change that does add one names it here, and the scan covers it from that line on.
     let read = raw_conn(world).and_then(|conn| {
         let rows = conn
             .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")

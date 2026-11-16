@@ -17,8 +17,9 @@ THE SYSTEM SHALL generate each tool's name, description, and input schema into `
 Acceptance: @R-protocol-02
 Why: a schema no type builds is a claim about the tool, and a provider rejects the claim, not the code.
 
-### R-protocol-03  Kinds and endings share one vocabulary
+### R-protocol-03  One vocabulary names the stream
 
-THE SYSTEM SHALL generate the block kind set and the request reason set into `contracts/`.
+THE SYSTEM SHALL generate the block kind set, the request reason set, and the context slot name set into
+`contracts/`.
 Acceptance: @R-protocol-03
 Why: clauses across several domains name a kind or a reason, and a hand-written list drifts from the type that checks it.
