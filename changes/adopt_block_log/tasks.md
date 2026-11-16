@@ -27,11 +27,11 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] R-session-30: delete the late-event scenarios; `blocks` immutability is R-session-31's
 - [ ] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [ ] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
-- [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot` and `user input`; drop `turn` and
-`committed marker`; re-word `log`, `run`, `session`, `steer` and `session start output`. The live `log` cell
-names `events`, `run` reads "a session's turns in order, with the events each produced", `turn` reads "one
-request to the model and what it produced, numbered per session", and `session` names turns: all of it is
-this change's unit
+- [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`, `user input`, `usage`, `terminal`
+and `state`; drop `turn` and `committed marker`; re-word `log`, `run`, `session`, `steer` and `session start
+output`. The live `log` cell names `events`, `run` reads "a session's turns in order, with the events each
+produced", `turn` reads "one request to the model and what it produced, numbered per session", and
+`session` names turns: all of it is this change's unit
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
 - [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
@@ -39,16 +39,13 @@ this change's unit
 `adopt_skills_convention`. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e
 committed changes/` finds those six and no other change; the files it also lists — `_template`,
 `adopt_block_log`, `add_turn_loop`, `adopt_observational_memory`, `change_spec_requirements` and
-`spike_gpui_surface` — speak the new unit themselves, not the old one
-own words, not the old one's
+`spike_gpui_surface` — speak the new unit themselves, not the old one.
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
 - [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
 `spec/session/storage/spec.md` gains 8 requirements and retires 2; `spec/session/spec.md`'s storage leaf
 count and `spec/index.md`'s Corpus count move by the same numbers read off the files
-count and `spec/index.md`'s Corpus count move by the same numbers read off the files
-leaf count and `spec/index.md`'s Corpus count move by the same numbers read off the files
 - [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool,
 spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies
 current, no local state tracked, toolchain pinned, core has no UI logic, core has no runtime, core spawns

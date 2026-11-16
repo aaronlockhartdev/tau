@@ -42,7 +42,7 @@ Why: one API reports input tokens at the open and another only at the close, so 
 
 ### R-session-45  A block records its slot
 
-EACH block records the context slot it fills, when it fills one.
+THE SYSTEM SHALL record in each block the context slot it fills, when it fills one.
 Acceptance: @R-session-45
 Why: a context rebuilt from the log needs the slot, and the loop's order is not a record.
 

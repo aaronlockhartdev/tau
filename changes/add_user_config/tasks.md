@@ -14,9 +14,7 @@
 wall clock limit and repeated-tool-call stop keys `R-agent-11` and `R-agent-12` ask for, the observation and
 reflection thresholds `R-session-25` reads, and the context budget `R-session-22` bounds memory by, each
 with a default (@R-config-13)
-stop keys `R-agent-11` and `R-agent-12` ask for, the observation and reflection thresholds `R-session-25` reads,
 and the context budget `R-session-22` bounds memory by
 - [ ] archive: at archive `spec/config/reload/spec.md` is a new leaf, so `spec/config/spec.md`'s Leaves cell
-and `spec/index.md`'s config Leaves cell and Corpus count move by the numbers read off the files
 - [ ] check: `cargo run -p tau-tools --bin gates`; rows in state M0 reported `skipped (M0)`, manual rows by hand
 - [ ] spec-review before commit

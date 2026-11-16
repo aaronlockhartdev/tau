@@ -49,7 +49,7 @@ Why: a request that spent a budget and returned nothing is a fact about the sess
 
 ### R-agent-08  A stream gap fails the request
 
-IF a provider stream skips a number in its sequence THEN THE SYSTEM SHALL fail the request with the stream-gap reason.
+IF a provider stream skips a number in its stream THE SYSTEM SHALL fail the request with the stream-gap reason.
 Acceptance: @R-agent-08
 Why: a stream with a hole in it is an answer with a piece missing, and no reader can tell which piece.
 
@@ -87,7 +87,6 @@ Why: a byte change before the cache breakpoint rewrites the whole prefix; a tail
 
 WHEN an injection reaches the model THE SYSTEM SHALL record its bytes as a block; an observation block is
 that record, not a second one.
-observation block is that record, not a second one.
 Acceptance: @R-agent-14
 Why: pointers rebuild the context only if every byte sent is in the log.
 

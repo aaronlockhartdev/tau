@@ -15,4 +15,5 @@
 - [ ] archive: after `add_turn_loop`, whose R-agent-15 scenario carries `@R-workspace-08`
 - [ ] spec-review (reviewer ticks)
 - [x] Implement: `<project>/.tau/.gitignore` containing `*`, written once, and the store path inside `.tau` (`crates/tau-core/src/project.rs`; scenarios `@R-workspace-06,07` in crates/tau-test/tests/features/workspace.feature, `@R-session-18` in crates/tau-test/tests/features/session.feature)
-- [ ] R-workspace-08: `Project::disclosure()` returns the line naming the write, and no session start output exists to print it, so no scenario is tagged for it (`headless session` is `M0`)
+- [ ] R-workspace-08: `Project::disclosure()` returns the line naming the write, and the scenario that prints it
+is `add_turn_loop`'s `R-agent-15`, tagged `@R-workspace-08`

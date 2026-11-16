@@ -6,7 +6,8 @@ Apply to `spec/protocol/spec.md` at archive time, for a domain with no children.
 
 ### R-protocol-01  The stream has one event set
 
-THE SYSTEM SHALL express a provider stream as a numbered sequence of block start, delta, block stop, usage, and terminal.
+THE SYSTEM SHALL number every event of a provider stream, in the order sent, over block start, delta, block
+stop, usage, and terminal.
 Acceptance: gate contracts current
 Why: adapters speak the generated set, so the vocabulary is checked by a gate, not by prose.
 

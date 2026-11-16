@@ -9,8 +9,8 @@ the context files `adopt_context_file_loading` loads
 - [ ] Scenario: R-session-24: the prompt prefix stays byte-identical across a condensation
 - [ ] Scenario: R-session-26 and 27: the counts reach the frontend, and a resume rebuilds observations from the log
 - [ ] Lane: those scenarios in `crates/tau-test/tests/features/session.feature` (the IDs are the session domain), steps in `crates/tau-test/src/steps/session.rs`; `STEPS.md` regenerates
-- [ ] R-session-19, 20: observations and reflections as blocks in the log, no table, each naming the range it
-supersedes, read back through `R-session-45`'s slot read
+- [ ] R-session-19, 20: observations and reflections as blocks in the log, no table, each naming the range
+it supersedes, read back through `R-session-46`'s slot read
 - [ ] R-session-21, 23: the observer and reflector prompts, on the session's model, over the loaded context
 - [ ] R-session-26: the count path from the memory leaf to the frontend event, and the step that reads it
 - [ ] docs: `docs/glossary.md` — `observation` and `reflection`, each a row of 15 words at most, as blocks appended to the log naming a range; the live `observation` row reads "a condensation of a session's oldest messages, stored in the session", which places it outside the log
