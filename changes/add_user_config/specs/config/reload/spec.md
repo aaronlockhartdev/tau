@@ -1,7 +1,6 @@
 # Delta: config/reload
 
 Apply to `spec/config/reload/spec.md` at archive time. Describe the difference, not the whole file.
-Apply to `spec/config/reload/spec.md` at archive time. Describe the difference, not the whole file.
 
 ## ADDED Requirements
 
@@ -88,5 +87,4 @@ THE SYSTEM SHALL list every config key with its default in `docs/stack.md`'s Con
 token budget, the wall clock limit, the repeated-tool-call stop, the observation and reflection thresholds
 and the memory context budget among them.
 Acceptance: @R-config-13
-Why: a key set by reading source is a key nobody can set without reading source, and a key table is a
-fact list, not a leaf obligation.
+Why: a key set by reading source is a key nobody can set without reading source.

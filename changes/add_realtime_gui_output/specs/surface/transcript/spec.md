@@ -1,7 +1,6 @@
 # Delta: surface/transcript
 
 Apply to `spec/surface/transcript/spec.md` at archive time. Describe the difference, not the whole file.
-Apply to `spec/surface/transcript/spec.md` at archive time. Describe the difference, not the whole file.
 
 ## ADDED Requirements
 

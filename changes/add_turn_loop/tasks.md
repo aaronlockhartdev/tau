@@ -9,7 +9,9 @@ two open changes, recorded here and in that change's tasks.md.
 
 - [ ] spike: one stub provider stream polled from a tokio executor and from a plain futures executor in the same process, proving the event payload crosses the executor boundary owned (gate: none; record the result here)
 - [ ] gates: the rows `core has no HTTP client` and `core installs no subscriber` are in `AGENTS.md`, in the shape of `core has no runtime`, and green today; prove each red with a scratch dependency in `crates/tau-core/Cargo.toml`, then delete the scratch (R-workspace-18, R-workspace-16)
-- [ ] R-protocol-01: the event set as Rust types in `crates/tau-protocol`, generated into `contracts/`; the `contracts current` gate reports the new files
+- [ ] R-protocol-01: the event set as Rust types in `crates/tau-protocol`, generated into `contracts/`; the
+scenario reads the numbering order the stub stream sends (@R-protocol-01), and the `contracts current`
+gate reports the new files
 - [ ] R-protocol-02: the tool's declared shape in `crates/tau-protocol`, its schema generated, and the stub tool's schema among them; the scenario reads the generated schema and asserts it names the tool's input schema, and deleting that field from the type turns it red (@R-protocol-02)
 - [ ] R-protocol-03: the block kind set and the request reason set as generated shapes in `crates/tau-protocol`, into `contracts/`; the scenario reads both sets and asserts every kind a block commits and every reason a request row is there (@R-protocol-03)
 - [ ] R-tools-30: the registry type core consumes, and the stub tool in `crates/tau-test` answering a call through it (@R-tools-30)

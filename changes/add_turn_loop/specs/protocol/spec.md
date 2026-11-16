@@ -8,8 +8,8 @@ Apply to `spec/protocol/spec.md` at archive time, for a domain with no children.
 
 THE SYSTEM SHALL number every event of a provider stream, in the order sent, over block start, delta, block
 stop, usage, and terminal.
-Acceptance: gate contracts current
-Why: adapters speak the generated set, so the vocabulary is checked by a gate, not by prose.
+Acceptance: @R-protocol-01
+Why: a consumer that reorders events cannot tell a gap from a loss, and R-agent-08 fails a request on a gap.
 
 ### R-protocol-02  A tool declares its shape
 
