@@ -6,7 +6,9 @@ A tau session must run for days without compaction. Rolling summaries destroy ea
 
 ## Options
 
-- Mirror Mastra OM: `@mastra/memory` ≥1.1.0 docs, Observational Memory section, and `packages/memory` source (read 2026-11-13); the docs state 5–40x compression and cache-first ordering. Cost: one session leaf spec, observation and reflection tables.
+- Mirror Mastra OM: `@mastra/memory` ≥1.1.0 docs, Observational Memory section, and `packages/memory` source
+(read 2026-11-13); the docs state 5–40x compression and cache-first ordering. Cost: one session leaf spec; an
+observation and a reflection are blocks in the log, so no table lands.
 - Rolling summary: no external evidence in its favour; it discards earlier decisions, regrows context rot, and invalidates the prompt cache.
 
 ## Decision
@@ -32,8 +34,6 @@ measured by eval. The clauses are in
 
 Eval: on demand. Whether observations beat the raw message tail is a real-LLM quality question, so the suite runs by hand before a threshold changes.
 
-Open: the threshold defaults sit with the config change; the queue cap and the stop keys are the loop
-change's to ask for; where the `observations` slot sits in the prefix order is `add_turn_loop`'s `R-agent-13`
-to settle when this lands.
-the context cap that bounds the slot an observation fills is `add_turn_loop`'s to set; this change
-owns the threshold that triggers one.
+Open: the threshold defaults sit with the config change, and `R-session-24` keeps the prefix byte-stable;
+the context cap that bounds the slot an observation fills is `add_turn_loop`'s to set, and this change owns
+the threshold that triggers one.

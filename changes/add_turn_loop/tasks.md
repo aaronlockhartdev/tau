@@ -38,7 +38,8 @@ changes, recorded here and in that change's tasks.md.
 - [ ] R-workspace-17: the log lines on stderr at `info`, with the lane asserting stdout stays empty
 - [ ] lane: `crates/tau-test/tests/features/agent.feature` driven by the in-process stub provider; steps in `crates/tau-test/src/steps/agent.rs`; `STEPS.md` regenerates
 - [ ] docs: `docs/stack.md` pins for `futures`, `tracing`, `uuid`, `petname`, and the row naming the provider leaf when it lands
-- [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops) and `delta` in its token sense, both used by these clauses and defined nowhere
+- [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops), `delta` in its token sense, `prompt cache`,
+`provider` and `queue cap`, all used by these clauses and defined nowhere
 - [ ] archive: lands after `adopt_block_log` (its clauses own blocks and requests) and before
 `change_spec_requirements`, which archives on the scenario `@R-workspace-08` this change's `R-agent-15`
 writes; at archive the counts move by what the deltas add — `spec/agent/spec.md` +15, `spec/protocol/spec.md`

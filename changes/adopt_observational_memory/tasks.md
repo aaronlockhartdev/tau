@@ -10,6 +10,11 @@
 - [ ] Implement: observer and reflector prompts
 - [ ] Eval: observations versus the raw message tail, on demand
 - [ ] Storage: the naming an observation carries (which range it supersedes) is a column of the memory leaf, with the leaf's own spec, and no clause here promises it
-- [ ] docs: `docs/glossary.md` — `observation` and `reflection` as appended blocks naming a range, not a
-condensation stored elsewhere; the live row says a message tail is replaced, which is the wording this change retires
+- [ ] docs: `docs/glossary.md` — `observation` and `reflection` as appended blocks naming a range; the live row
+reads "a condensation of a session's oldest messages, stored in the session", which places them outside the log
+- [ ] lane: the threshold scenarios in `crates/tau-test/tests/features/memory.feature`, steps in
+`crates/tau-test/src/steps/memory.rs`; `STEPS.md` regenerates
+- [ ] archive: lands after `adopt_block_log` (its clauses own blocks); at archive `spec/session/memory/spec.md`
+is a new leaf of 9 requirements, so `spec/session/spec.md`'s Leaves cell, `spec/index.md`'s session Leaves cell
+and Corpus count move by the numbers read off the files
 - [ ] spec-review before commit

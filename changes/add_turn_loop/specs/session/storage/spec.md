@@ -18,7 +18,8 @@ Why: a session switches models, so the row holds a last value, not a fixed one.
 
 ### R-session-43  A session keeps a display name
 
-WHERE a session has no name THE SYSTEM SHALL generate a name and store it.
+WHERE a session has no display name THE SYSTEM SHALL store the name its caller supplies, an adjective-noun
+pair generated at the surface boundary.
 Acceptance: @R-session-43
 
 ### R-session-44  A session key is UUID v7

@@ -54,18 +54,17 @@ injects and the trait that runs a tool in `tau-core` (R-tools-30, 31). `spec/wor
 rules and the rule that the HTTP client to a model provider stays out of core and its graph (R-workspace-16,
 17, 18): libraries emit on the `tracing` facade, only a binary installs a subscriber, and logs go to stderr
 at the default level.
-`tracing` facade, only a binary installs a subscriber, and logs go to stderr at the default level.
 `spec/session/storage/` gains the session row's facts (R-session-41..44: working directory, last model,
 generated display name, and a UUID v7 key in canonical text).
 Two gate rows join `AGENTS.md`: `core has no HTTP client` and `core installs no subscriber`, both tree
 greps in the shape of `core has no runtime`.
 The lane runs on an in-process stub provider in `crates/tau-test` implementing the trait; tapes are
 deferred until a working loop can generate them, so the `headless session` gate row stays `M0` and
-`crates/tau-test/suites/` stays empty.
+`crates/tau-test/suites/` is a directory no suite has created yet.
 This change also closes `change_spec_requirements`: the session start output line is printed, so
 `@R-workspace-08` gains its scenario.
 Cost, stated: new dependencies `futures` (core), `tracing` (facade, core), `uuid` (v7) and `petname`
-(name generation, at the surface boundary); three store writes per request — open, per block, terminal — each
+two store writes per request — open and terminal — plus one per block,
 a transaction. Contention is measured, cost is not: the store's worst commit under two writers ran 41 ms
 (`changes/archive/2026-11-15-add_session_storage/tasks.md`). Tokens: the context is resent whole every request, priced by
 prefix caching, where one write and nine reads cost 2.15× the input against 10× uncached: 1.25× a cache

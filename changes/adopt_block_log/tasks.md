@@ -27,16 +27,16 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
 - [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`; drop `turn` and `committed marker`;
 re-word `log`, `session`, `steer`, `session start output`; its `log` and `session` cells name the `events`
-table, which this change renames, and `run` reads "Stop the loop", a word the agent domain uses with no
-entry of its own — all of it re-worded here
+and its `run` cell reads "a session's turns in order, with the events each produced", the unit this change
+retires, while `add_turn_loop` says "stop the loop" with no `loop` entry of its own — all of it re-worded here
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
 - [ ] re-word the open changes written in the old unit — `add_subagent_support` (its delta specs),
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
-a word-boundary grep (`grep -rilwE 'turn(s)?|event(s)?|committed' changes/*/`) finds those six and no
-other change; the hits in `_template`, `adopt_block_log`, `add_turn_loop`, `adopt_observational_memory`,
-`change_spec_requirements` and `spike_gpui_surface` are the new unit's own words, and `adopt_hash_anchor_editing`'s are `return`
-no other, so `adopt_hash_anchor_editing` needs nothing
+`adopt_skills_convention`; a word-boundary grep (`grep -rilwE --exclude-dir=archive
+'turn(s)?|event(s)?|committed' changes/*/`) finds those six and no other change; the hits in `_template`,
+`adopt_block_log`, `add_turn_loop`, `adopt_observational_memory`, `change_spec_requirements` and
+`spike_gpui_surface` are the new unit's own words, and `adopt_hash_anchor_editing`'s are `return`
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` and `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added; the row sizes and the two
 percentages in the proposal come off that run, which is a scratch probe, so it carries no committed repro.

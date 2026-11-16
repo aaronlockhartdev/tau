@@ -30,7 +30,7 @@ Pointers from a mutable row into the log are the shape that keeps both clauses g
   marker retires. Evidence: the wire closes blocks at its own events (above); measured today with
   `sqlite3` at `page_size=4096`, 3000 blocks with 200-byte payloads is 888,832 bytes and 3000 request
 rows add 278,528 (≈93 bytes each, +31% at one request per block, ≈8% at four blocks per request), the run
-  recorded in tasks.md;
+the open Measure unit in tasks.md;
   R-session-03 stays green because pointers are not payload text. Cost: no new dependency; one extra
 write per request open and one per terminal; latency under contention, not cost: the archive's two-writer
   run measured a worst commit of 41 ms
@@ -62,7 +62,8 @@ state pointers, a block's request, the resume read, usage stamped at the termina
 04, 05, 06, 08, 10, 28, 31, 32 modified in place to the new unit; R-session-07 and R-session-30
 retired with `Supersedes:`. A MODIFIED clause keeps its ID and is never renumbered; its heading follows the
 unit, so four headings re-word (`A log row names a turn` → `A block names a live request` and the three
-naming an event), and the scenarios keep their tags. Terms in `docs/glossary.md`
+and the three naming an event or a turn: `Event and state commit together`,
+`Readers never hold across a turn`, `A committed turn survives restart`)
 added; `turn` and `committed marker` dropped; `log`, `run`, `session`, `steer` re-worded.
 Six open changes carry wording in the old unit — `add_subagent_support`, `add_realtime_gui_output`, `add_user_config`,
 `add_test_lanes`, `adopt_context_file_loading`, `adopt_skills_convention` — and are re-worded by this
@@ -70,12 +71,11 @@ change, or the corpus ships two vocabularies.
 `adopt_observational_memory` needs more than wording: its `R-session-19` promised to replace the oldest
 messages, and `R-session-31` refuses any update to a log row, so that clause now appends an observation
 block naming the range it supersedes.
-update to a log row, so that clause now appends an observation block naming the range it supersedes.
 The `crates/tau-protocol/src/bin/contracts.rs:1` comment cites R-workspace-04, which is not a live
-clause (workspace runs 09..15): the citation moves to the invariant at `spec/index.md:7`.
+(workspace runs 09..15)
 Eval: none needed — a log's unit is mechanical, and the lanes count commits and rows.
 
-Open: fork's copy cost (a `blobs` table keyed by content hash is the measured fix, 150,528 bytes per
+a `blobs` table keyed by the bytes it stores is the measured fix
 branch against 970,752 copied, in `changes/archive/2026-11-15-add_session_storage/proposal.md`; opens
 as its own change); two writers on one session stay refused by nothing (the gap recorded in
 `changes/archive/2026-11-15-add_session_storage/tasks.md`); oversized and binary payloads stay inline
