@@ -3,7 +3,7 @@
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
 `gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
-`lane`: a runner with a fixed scope: the ci lane, unit, behaviour, surface, eval.
+`lane`: a runner with a fixed scope: the ci lane, unit, behaviour, eval.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
@@ -12,7 +12,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `fork`: a child session that copies a range of the parent's blocks and their requests.
 `steer`: send input to a running session, stored as a block in its log.
 `roster`: the view listing a session's children with their states.
-`config layer`: one of the two config levels, global and project, merged under the merge rules.
+`config layer`: one of the two config levels, global and project, merged by the config clauses.
 `anchor`: the five-character handle a read serves for one line of one file.
 `outline`: a file's anchored declaration rows, bodies read on demand.
 `observation`: a condensation of a session's oldest messages, appended to its observations slot.
@@ -20,7 +20,8 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `tape`: a recorded model transcript that answers calls in place of a provider.
 `layer`: one of two levels a config, context, or skill file sits at, global and project.
 `tail`: the newest messages of a session, kept verbatim.
-`project`: the working directory's git root, or the working directory when it is not one.
+`project`: the directory a session works in, named by its root.
+`gate state`: the column saying who runs a row: `run` today, `manual` by an agent, `M0` never.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
 `event time`: the moment core produced a block or emitted a stream event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any block.

@@ -18,7 +18,8 @@
 is `add_turn_loop`'s `R-agent-15`, tagged `@R-workspace-08`
 - [ ] docs: the delta-format sweep `adopt_block_log` carried here — bare `## ADDED` markers to
 `## ADDED Requirements`, headings over the six-word cap, `THE SYSTEM SHALL NOT` obligations outside
-the five EARS forms, and the `Apply to` line naming each delta's live leaf (`add_subagent_support`,
+the five EARS forms, the `Apply to` line naming each delta's live leaf, and the `IDs:` line ten of the
+twelve open changes lack (`add_subagent_support`,
 `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`, `adopt_hash_anchor_editing`,
 `adopt_skills_convention`)
 - [ ] docs: the clause-layout sweep `adopt_block_log` carried here — obligation, `Acceptance:` and

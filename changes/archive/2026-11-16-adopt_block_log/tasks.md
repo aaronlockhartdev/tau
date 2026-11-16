@@ -121,8 +121,8 @@ is absent from the schema and a scenario reads that absence
   prompt cache, which is the subagent change's unit. The proposal's term list predates this sweep;
   this list is the tree's
 - [x] docs: `docs/stack.md` Storage row names `blocks` and `requests`, the state as a pair of
-  pointers into the log, and the ranges the storage leaf covers at its archive: R-session-01..06, 08, 10, 11, 13,
-  18, 28..46, with 07 and 30 retiring at this change's archive and 41..44 landing from
+  pointers into the log, and the clauses the storage leaf covers at its archive: R-session-01..06,
+  08, 10, 11, 13, 18, 28, 29, 31..40, 45, 46 — 07 and 30 retired by this change, 41..44 pending in
   `add_turn_loop`
 - [x] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:67` and `:75` cite R-workspace-04, a clause
   `change_spec_requirements` issues and that goes live at its archive; the comments cite the clause
@@ -166,19 +166,25 @@ template's, in
 
 Carried: the three lines above stay open, and each has a named home. The delta-format sweep and the
 clause-layout sweep belong with `change_spec_requirements`, the change that owns the spec format, and
-land there as its task lines. The Measure belongs with the `blobs` change this proposal promises to
-open, which is not in `changes/` yet, because the numbers it reproduces are that option's evidence and
-the schema to measure is the one this change landed. Rows that read nothing today and stay green, with the clause that will give each teeth:
-`contracts current` compares an empty generated set (teeth come with R-protocol-02 in `add_turn_loop`),
-and `spec tool` prints a corpus count that no row compares to anything, so `spec/index.md`'s number
-carries no gate. The closed name lists (`core has no runtime`, `core has no UI logic`, `core has no
-HTTP client`, `core installs no subscriber`) match dependency names, so a hand-rolled client in core's
-own source, or a subscriber installed there under another name, stays green — wider than the clauses
-those rows answer to, which speak core's source and graph and every install site. `unit + surface`
-reads the `fail-fast` line and `-P ci` selects a profile by name; both are greps, not a config parse.
-`core spawns nothing` greps prose too, so a comment naming `.spawn(` reddens it — a false red, not a
-false green. Ten of the twelve open changes carry no `IDs:` line (`add_realtime_gui_output` and
-`add_turn_loop` do); the format sweep above owns adding them.
+land there as its task lines — the format sweep's line there names the `IDs:` line too, which ten of
+the twelve open changes lack (`add_realtime_gui_output` and `add_turn_loop` carry one). The Measure
+belongs with the `blobs` change this proposal promises to open, which is not in `changes/` yet, because
+the numbers it reproduces are that option's evidence and the schema to measure is the one this change
+landed. The `spec-review` line below stays open until a reviewer ticks it.
+
+Rows that read nothing today and stay green: `contracts current` compares an empty generated set (teeth
+come with R-protocol-02 in `add_turn_loop`); `spec tool` prints a corpus count no row compares to
+anything, so `spec/index.md`'s number carries no gate; `no local state tracked` asks whether the
+tracked set under `target` and `.tau` is empty, and both paths are gitignored, so that set is empty by
+construction and only `git add -f` reaches it. The closed name lists (`core has no runtime`, `core has
+no UI logic`, `core has no HTTP client`, `core installs no subscriber`) match dependency names, so a
+hand-rolled client in core's own source, or a subscriber installed there under another name, stays
+green; the clauses those two rows answer to are pending in `add_turn_loop` (R-workspace-16..19) and
+speak core's source and graph and every install site, so the rows are narrower than they will need to
+be. `unit + surface` reads a `fail-fast = false` line and `-P ci` selects a profile by name; both are
+greps, not a config parse, and the grep is blind to which profile the line sits under. Separately, and
+in the other direction: `core spawns nothing` greps prose too, so a comment naming `.spawn(` reddens
+it — a false red, not a false green.
 
 - [x] archive: `spec -- archive adopt_block_log` ran; the leaf gained 8 (35..40, 45, 46) and retired 2
 (07, 30), so `spec/session/storage/spec.md` reads 25 requirements and `spec/index.md`'s corpus 33,
