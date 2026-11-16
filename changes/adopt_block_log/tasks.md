@@ -2,6 +2,9 @@
 
 One line per committable unit. Implementation lines name an `R-ID`. Spikes and gates first.
 
+- [ ] IDs: this change claims `R-session-35..40, 45 and 46`; `add_turn_loop` claims 41..44 and lands after
+this one, so the session range is split until that change archives — the gap check counts open deltas, so
+`spec -- --check` stays green across the split
 - [ ] gates: confirm `core has no UI logic`, `core has no runtime`, `core spawns nothing` stay green over the renamed schema (no new rows in this change)
 - [ ] R-session-35: delta clause in changes/adopt_block_log/specs/session/storage/spec.md, then rewrite the migration in place in `crates/tau-core/src/storage/mod.rs` — `events` → `blocks`, drop the `turn` table, the `committed` column and `events_no_late_insert`, add `requests`, rebuild `blocks_fts` (external content: drop, recreate, rebuild); pre-v1, so no store upgrade ships
 - [ ] R-session-35: `Store::commit(&Block)` — one transaction per block, and one transaction for the batch a stream closes at once, store-wide sequence
@@ -40,10 +43,13 @@ produced", `turn` reads "one request to the model and what it produced, numbered
 `session` names turns: all of it is this change's unit
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
-- [ ] docs: sweep the bare `## ADDED` markers to `## ADDED Requirements` in the deltas this change does not
-touch — `add_subagent_support` (4 leaves), `add_surface_components`, `add_test_lanes`,
-`adopt_context_file_loading`, `adopt_hash_anchor_editing`, `adopt_skills_convention`, and the two
-`add_user_config` headings over the cap (`R-config-01`, `R-config-05`)
+- [ ] docs: sweep the deltas this change does not touch: bare `## ADDED` markers to `## ADDED Requirements`
+(`add_subagent_support` 4 leaves, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
+`adopt_hash_anchor_editing`, `adopt_skills_convention`); headings over the six-word cap (`R-config-01`,
+`R-config-05`, `R-acp-01`, `R-acp-04`, `R-acp-06`, `R-surface-01`, `R-surface-02`, `R-surface-07`,
+`R-surface-21`, `R-tools-02`, `R-tools-06`, `R-tools-07`, `R-tools-09`, `R-tools-11`, `R-tools-14`,
+`R-tools-28`, `R-harness-04`); the `THE SYSTEM SHALL NOT` obligations that sit outside the five EARS forms
+(`R-context-03`, `R-tools-22`, `R-tools-28`, `R-skills-02`)
 - [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading` and
 `adopt_skills_convention`. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e

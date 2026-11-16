@@ -30,4 +30,5 @@ The protocol widens to streaming events, and `contracts/` regenerates. Each even
 
 Eval: none needed. The spike measures the frame budget and the surface lane asserts stream equivalence.
 
-Open: none.
+Open: the frame budget R-surface-18 holds the surface to is the number `spike_gpui_surface` records, and
+is fixed by that spike's measurement, not by this change.

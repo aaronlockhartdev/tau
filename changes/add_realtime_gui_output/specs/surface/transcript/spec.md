@@ -23,7 +23,7 @@ Acceptance: @R-surface-10
 
 ### R-surface-11  A closed block is never re-parsed
 
-WHEN a token delta arrives THE SYSTEM SHALL NOT re-parse a closed markdown block.
+WHEN a token delta arrives THE SYSTEM SHALL leave every closed markdown block's render untouched.
 
 Acceptance: @R-surface-11
 
@@ -58,15 +58,16 @@ THE SYSTEM SHALL treat only ATX heading syntax as a heading.
 Acceptance: @R-surface-16
 Why: a setext underline restyles the lines above it, which breaks a closed block's retained layout.
 
-### R-surface-17  The prompt field stays usable under load
+### R-surface-17  The prompt field stays usable
 
 WHILE tokens stream at full rate THE SYSTEM SHALL accept typed text, IME composition, and paste in the prompt field.
 
 Acceptance: gate desktop
 
-### R-surface-18  Frame cost stays inside the spike's budget
+### R-surface-18  Frame cost stays in budget
 
-WHILE the transcript renders a tape at full token rate with a storage writer and checkpoint running alongside THE SYSTEM SHALL stay inside the frame budget the surface spike records.
+WHILE the transcript renders a tape at full token rate, with a storage writer and a checkpoint running
+alongside, THE SYSTEM SHALL keep its frame cost inside the budget the surface spike records.
 
 Acceptance: gate live output under load
 

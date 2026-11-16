@@ -77,7 +77,7 @@ lane's question, and that gate row is `manual` with no suite file to run.
 
 Open: the queue cap's key and default, named by the config change (R-agent-11 refuses past it); the tape
 format and the `headless session` gate flip, when a working loop can record one; the context cap policy
-and what it sends, which this change owns as a cap policy and needs a measured budget;
+and what it sends, which opens as its own change and needs a measured budget;
 `adopt_observational_memory` picks the memories that fill the slot the cap leaves.
 `add_bash_tool` for the first real tool; the provider client change for HTTP, retries, cache keys, and the
 leaf crate's name;
