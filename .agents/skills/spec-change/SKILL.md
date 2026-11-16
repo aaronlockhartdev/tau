@@ -18,7 +18,6 @@ Verb carries intent: `add_`, `change_`, `remove_`, `adopt_`, `spike_`, `scaffold
 - **Context**: the problem in 3–6 sentences; existing behaviour by `R-ID`.
 - **Options**: 2–4, each one line + evidence + cost. Evidence = measured in this repo (a number, a spike, a repro) or an external source with a link and a date. "Feels idiomatic", "widely used" is not evidence; mark anything unverified `unverified` and it cannot carry the decision. A mirror decision keeps the same shape: the options are mirror the reference and design it in-house, and the evidence names the reference's version and the section read.
 - **Decision + consequences**: the option, what gets easier, what you now own (invariants, migrations, deletions), and the leaf spec each new rule lands in. A rule you own and do not write as a delta clause never enters `spec/`.
-
 - **Eval**: `none needed`, or the suite name, when the value depends on real-LLM quality.
 
 State the cost: new dependencies, runtime cost, and tokens per turn where a turn pays it. A feature that can't state its cost is not accepted.
@@ -52,6 +51,7 @@ Supersedes: R-<domain>-<NN> → R-<domain>-<MM>
 A change withdraws a clause it added that never landed in `spec/` by moving that heading under `## REMOVED Requirements` with no `Acceptance:` ref and no `Supersedes:` line: the number stays consumed, `spec lint` reads it as issued, `spec archive` finds no clause to delete, and no later id moves. A `Supersedes:` line means the opposite: the rule is in `spec/`, is retired from there, and is checked as before (R-harness-11). The heading moves with its `Why:`; the obligation line goes, since it binds nothing.
 
 - Describe the difference, never the whole file.
+- Acceptance refs take three forms: a scenario tag `@R-<domain>-<NN>`, a `gate <name>` in `AGENTS.md`, or a `spec-review check <n>`; the linter resolves all three.
 - Behaviour change = `MODIFIED` with full replacement text. Retirement = `REMOVED` + `Supersedes:`, and the
 retired clause's scenario goes in the same commit: `spec lint` reports a scenario tag that names no
 requirement. A clause keeps its ID from the first scenario citation: never renamed, renumbered, or reused.

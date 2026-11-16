@@ -48,6 +48,7 @@ Acceptance: @R-<domain>-<NN>
 
 Scenarios live in `crates/tau-test/tests/features/<domain>.feature`, tagged with the requirement's ID: `Acceptance: @R-<domain>-<NN>`.
 A rule about a build fact the lanes cannot observe takes a gate instead: `Acceptance: gate <name>`, naming a row in `AGENTS.md`. A gate never replaces a scenario for observable behaviour.
+A rule no gate and no lane can observe — one a review checks — takes `Acceptance: spec-review check <n>`, naming a numbered check in `.agents/skills/spec-review/SKILL.md`.
 Use only steps listed in `crates/tau-test/tests/features/STEPS.md`.
 `Background` for shared preconditions, `Scenario Outline` + `Examples` for matrices. The spec never contains Given/When/Then.
 

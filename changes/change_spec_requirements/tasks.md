@@ -22,7 +22,8 @@
 `## ADDED Requirements`, clauses phrased as a bare negation (no negated form in `spec-authoring`'s
 §Requirement form), the `Apply to` line naming each delta's live leaf, and the `IDs:` line — ten of the
 twelve open changes state no clause IDs, `add_turn_loop` listing its claims under `IDs:` and
-`add_realtime_gui_output` opening with an `IDs:` task. The six deltas the sweep re-formats are
+`add_realtime_gui_output` opening with an `IDs:` task. The nine delta files the sweep re-formats, in six
+changes, are
 `add_subagent_support`, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
 `adopt_hash_anchor_editing`, `adopt_skills_convention`
 - [ ] docs: the clause-layout sweep `adopt_block_log` carried here — obligation, `Acceptance:` and
@@ -32,3 +33,5 @@ twelve open changes state no clause IDs, `add_turn_loop` listing its claims unde
 returns it (`crates/tau-core/src/project.rs`) and `@R-workspace-08` is tagged, so the print lands with
 `add_turn_loop`'s `R-agent-15`
 - [ ] spec-review (reviewer ticks)
+- [ ] check: `cargo run -p tau-tools --bin gates`; rows in state M0 reported `skipped (M0)`, the manual row
+`workspace layout` by hand

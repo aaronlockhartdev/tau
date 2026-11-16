@@ -6,4 +6,8 @@
 - [ ] Scenario: R-tools-20,21 body on demand, loading reported
 - [ ] Implement: frontmatter parser with the convention's field names
 - [ ] Implement: skill list into context assembly
+- [ ] archive: `spec/tools/skills/spec.md` is a new leaf, so `spec/tools/spec.md`'s count and Leaves cell
+(+8, `skills`), `spec/index.md`'s tools Leaves cell and the Corpus count move by the numbers read off the
+files
+- [ ] check: `cargo run -p tau-tools --bin gates`; rows in state M0 reported `skipped (M0)`, manual rows by hand
 - [ ] spec-review before commit
