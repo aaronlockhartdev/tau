@@ -70,7 +70,7 @@ struct Clause {
 fn is_issued_form(number: &str) -> bool {
     number
         .parse::<u32>()
-        .is_ok_and(|n| number == format!("{n:02}"))
+        .is_ok_and(|n| n >= 1 && number.len() <= 4 && number == format!("{n:02}"))
 }
 
 fn split_id(id: &str) -> Option<(&str, &str)> {
@@ -204,13 +204,20 @@ fn clause_head_ids(text: &str) -> Vec<String> {
 /// acceptance checks and `spec -- id` hands the same number out again.
 fn stray_heading(line: &str) -> Option<&'static str> {
     let rest = line.trim_start().strip_prefix("###")?;
-    if is_clause_head(line) {
-        return None;
-    }
-    rest.trim_start_matches('#')
-        .trim_start()
-        .starts_with("R-")
-        .then_some("a clause heading has no space after its hashes, so no scan reads it")
+    // Readable when a scan takes the line as a clause whose first token is an id.
+    let readable = is_clause_head(line)
+        && clause_head(line).is_some_and(|head| {
+            head.split_whitespace()
+                .next()
+                .is_some_and(|t| t.starts_with("R-"))
+        });
+    let token = rest
+        .trim_start_matches(['#', ' ', '\t'])
+        .split([' ', '\t'])
+        .next()
+        .unwrap_or("");
+    (!readable && token.starts_with("R-"))
+        .then_some("a clause heading hides its id from every scan, so the id goes uncounted")
 }
 
 /// The heading shape rules, read off the clause's own first line: `spec-authoring`
@@ -240,7 +247,7 @@ fn fence_flags(lines: &[&str]) -> Vec<bool> {
     let mut flags = vec![false; lines.len()];
     let mut inside = false;
     for (i, line) in lines.iter().enumerate() {
-        if line.trim_start().starts_with("```") {
+        if line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~") {
             flags[i] = true;
             inside = !inside;
             continue;
@@ -372,7 +379,10 @@ fn corpus_files() -> (Vec<PathBuf>, Vec<PathBuf>) {
 /// means every later line is read as body, which a clause range would then swallow.
 fn fences_balanced(text: &str) -> bool {
     text.lines()
-        .filter(|l| l.trim_start().starts_with("```"))
+        .filter(|l| {
+            let line = l.trim_start();
+            line.starts_with("```") || line.starts_with("~~~")
+        })
         .count()
         % 2
         == 0
@@ -1077,6 +1087,14 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)], live: &BTreeSet<String>) -> Ve
                 continue;
             }
         };
+        // A range in an unbalanced file runs to the end of it, so a MODIFIED or REMOVED
+        // write there would delete every clause after the fence.
+        if !fences_balanced(&text) {
+            refusals.push(format!(
+                "{}: unclosed code fence, a clause range in it has no end",
+                target.display()
+            ));
+        }
         for clause in clauses {
             // A number outside the issued form parses to a number already allocated, so it
             // masks the duplicate check and the gap check, and lands in the corpus where
@@ -1154,8 +1172,7 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)], live: &BTreeSet<String>) -> Ve
                     target.display(),
                     clause.id
                 ));
-            } else if clause.section.contains("ADDED") && clause_range(&text, &clause.id).is_some()
-            {
+            } else if clause.section.contains("ADDED") && live.contains(clause.id.as_str()) {
                 // Appending an id the corpus already has would duplicate it and consume
                 // the delta, so refuse before the change moves to the archive.
                 refusals.push(format!(
@@ -1542,6 +1559,24 @@ mod tests {
     }
 
     #[test]
+    fn added_refuses_an_id_the_corpus_holds_elsewhere() {
+        let plan = [(
+            PathBuf::from("spec/tools/delegation/spec.md"),
+            vec![clause(
+                "R-session-02",
+                "## ADDED Requirements",
+                "### R-session-02  A duplicate in a sibling leaf\nTHE SYSTEM SHALL x.\nAcceptance: @R-session-02",
+            )],
+        )];
+        let refusals = validate_plan(&plan, &live(&["R-session-02"]));
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(
+            refusals[0].contains("ADDED would duplicate"),
+            "{refusals:?}"
+        );
+    }
+
+    #[test]
     fn the_removed_shapes_are_four_and_each_answers() {
         let leaf = PathBuf::from("../../spec/session/storage/spec.md");
         let removed = |supersedes: bool| {
@@ -1652,22 +1687,45 @@ mod tests {
             )],
         )];
         assert_eq!(validate_plan(&ok, &live(&[])), Vec::<String>::new());
+
+        // A tilde fence is a fence: one opener in a clause leaves the target fenced.
+        let tilde = [(
+            PathBuf::from("spec/session/never-exists/spec.md"),
+            vec![clause(
+                "R-session-02",
+                "## ADDED Requirements",
+                "### R-session-02  A name\nTHE SYSTEM SHALL x.\n~~~\nexample",
+            )],
+        )];
+        let tilde_refusals = validate_plan(&tilde, &live(&[]));
+        assert!(
+            tilde_refusals
+                .iter()
+                .any(|r| r.contains("unclosed code fence")),
+            "{tilde_refusals:?}"
+        );
     }
 
     #[test]
     fn a_heading_with_no_space_after_the_hashes_is_stray() {
         assert_eq!(
             stray_heading("###R-tools-01  Name"),
-            Some("a clause heading has no space after its hashes, so no scan reads it")
+            Some("a clause heading hides its id from every scan, so the id goes uncounted")
         );
         assert_eq!(
             stray_heading("    ####R-tools-01  Name"),
-            Some("a clause heading has no space after its hashes, so no scan reads it")
+            Some("a clause heading hides its id from every scan, so the id goes uncounted")
         );
         // The forms a scan reads: a space, a tab, prose, and a heading with no id.
         assert_eq!(stray_heading("### R-tools-01  Name"), None);
         assert_eq!(stray_heading("###\tR-tools-01  Name"), None);
         assert_eq!(stray_heading("### notes"), None);
+        // The id behind a stray hash: a scan opens a clause there, so it counts nothing.
+        assert_eq!(
+            stray_heading("### #R-tools-01  Name"),
+            Some("a clause heading hides its id from every scan, so the id goes uncounted")
+        );
+        assert_eq!(stray_heading("### # a heading with no id"), None);
     }
 
     #[test]

@@ -78,9 +78,10 @@ A decision worth keeping past the session lands in `spec/` through a change; pro
 ## 6. Archive
 
 `archive` refuses a delta whose clause has a number `spec -- id` never issues, sits under no marker, names
-no live clause to change, repeats an id `spec/` has, retires an id `spec/` holds in a leaf the delta does not
-write, withdraws (no `Supersedes:`) an id `spec/` holds, runs its heading over the six-word cap, sits out of
-column 0, carries an unclosed fence in its own text, or hides a heading no scan reads. Whether each clause's
-acceptance ref has run is a reviewer's call: the tool reads no run ledger.
+no live clause to change, repeats an id `spec/` holds anywhere, retires an id `spec/` holds in a leaf the
+delta does not write, withdraws (no `Supersedes:`) an id `spec/` holds, or hides a heading no scan reads; for
+an ADDED or MODIFIED clause, also a heading over the six-word cap, out of column 0, or with an unclosed fence
+in its own text, and for any target leaf, one whose fences never close. Whether each clause's acceptance ref
+has run is a reviewer's call: the tool reads no run ledger.
 `cargo run -p tau-tools --bin spec -- archive <id>` applies the deltas into `spec/` and moves the change to `changes/archive/<YYYY-MM-DD>-<id>/`.
 Archive creates `spec/<domain>/spec.md` when the delta names a domain that has no file yet. Archive is append-only: never edited afterwards. New facts are a new change.
