@@ -141,7 +141,8 @@ next request), a block shows its own event time (`add_realtime_gui_output`), no 
 session block (`add_user_config`), and skill and context costs are counted per request
 (`adopt_skills_convention`, `adopt_context_file_loading`); `change_spec_requirements` names the
 committed-marker clause as retired. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e
-events -e committed changes/` answers 18 files, every hit one of: a stream event (the provider's,
+events -e committed changes/` answers 17 files (the command above, run at this archive), every hit
+one of: a stream event (the provider's,
 numbered by R-protocol-01; a child's, in `add_subagent_support`'s acp delta; core's event stream,
 which R-surface-08 owns), the glossary's `event time`, the store's `commit` or git's `committed`,
 the noun in a quote of the retired design (`change_spec_requirements`'s "the store of turns and

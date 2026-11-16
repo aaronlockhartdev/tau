@@ -42,16 +42,16 @@ and `@R-workspace-08` that lets `change_spec_requirements` archive
 - [ ] R-session-42: the last model recorded per request, and a mid-session model switch in the lane
 - [ ] R-session-43: the adjective-noun display name, supplied at the surface boundary with a seeded generator in the lane
 - [ ] R-session-44: UUID v7 ids in canonical lowercase text, and the sort-by-id scenario
-- [ ] R-workspace-16 and 19: the `tracing` facade emitting in the libraries, a subscriber installed only in a binary
+- [ ] R-workspace-16: gate `core installs no subscriber`; installing one in `tau-core` turns it red
 - [ ] R-workspace-17: the log lines on stderr at `info`, read from a child binary's stderr, with the lane asserting stdout stays empty
 - [ ] lane: `crates/tau-test/tests/features/agent.feature` driven by the in-process stub provider; steps in `crates/tau-test/src/steps/agent.rs`; `STEPS.md` regenerates
 - [ ] lane: a child binary that opens a session, runs the loop against the stub provider and writes its logs, so a scenario reads its stdout and stderr (the pattern `open_store` and `crash_store` set)
 - [ ] docs: `docs/stack.md` — pins for `futures`, `tracing`, `uuid` and `petname`; the rows stating the log rules (R-workspace-16..19) as graph rules, in the shape of the rows R-workspace-14 and 15 hold; the Storage row's clause range after `adopt_block_log` moved it; the row naming the provider leaf when that change lands
 - [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops), `delta` in its token sense, `display name`,
 `prompt cache`, `provider`, `queue cap`, the three the log clauses use (`library`, `binary`, `frontend`),
-and the two streams a reader meets in one protocol leaf: `provider stream` (the events of one provider
-request, numbered by R-protocol-01) and `event stream` (core's stream a frontend renders, whose clauses are
-`add_realtime_gui_output`'s); the four the storage and surface clauses lean on —
+and the stream a reader meets in one protocol leaf: `provider stream` (the events of one provider
+request, numbered by R-protocol-01); `event stream` has its cell already
+The four the storage and surface clauses lean on —
 `tool call`, `message`, `write connection`, `frame budget`
 - [ ] archive: lands after `adopt_block_log` (its clauses own blocks and requests) and before
 `change_spec_requirements`, which archives on the scenario `@R-agent-15` writes; at archive the counts move

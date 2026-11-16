@@ -74,7 +74,7 @@ Tokens: the context is resent whole every request, priced by prefix caching, whe
 reads cost 2.15× the input against 10× uncached — 1.25× a cache write and 0.1× a cache read
 (<https://platform.claude.com/docs/en/build-with-claude/prompt-caching>, read 2026-11-15).
 Eval: none needed. The mechanics are lane-testable against the stub; conversation quality is the eval
-lane's question, and that gate row is `manual` with no suite file to run.
+lane's question, and that gate row is `M0`: no `eval` bin, no `suites/` to run.
 
 Open: the queue cap's key and default, named by the config change (R-agent-11 refuses past it); the tape
 format and the `headless session` gate flip, when a working loop can record one; the context cap policy

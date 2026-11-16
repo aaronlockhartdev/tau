@@ -2,8 +2,8 @@
 
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
-`gate`: a named command in `AGENTS.md` that a change must pass.
-`lane`: a test runner with a fixed scope: behaviour, surface, eval.
+`gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
+`lane`: a test runner with a fixed scope: the ci lane, behaviour, surface, eval.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
@@ -25,7 +25,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `event time`: the moment core produced a block or emitted a stream event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any block.
 `block`: one item of a conversation, stored as one row of the log; the store's unit.
-`request`: one provider round-trip: the blocks it sent, its provider and model, state, usage and terminal.
+`request`: one provider round-trip: the blocks it sent, its provider and model, its usage and terminal.
 `injection`: a block the runtime adds to the context, not text from a user.
 `slot`: the context position a block names, such as a prompt part.
 `user input`: text from a user that reaches the log outside a round-trip, stored as a block.
@@ -34,6 +34,8 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `state`: a pair of log sequences naming the context a block was built from.
 `stream`: the blocks one model call produces, closed at once by its provider.
 `event stream`: core's channel to the frontends: the events of a session, one per state change.
+`frontend`: a client of core's event stream: the terminal, the desktop app, an ACP client.
+`message`: a block of user, assistant, tool or system text in a log.
 `markdown block`: a renderable range of transcript markdown — paragraph, list, fence, table; the renderer's block tree.
 `fence`: a markdown block of fenced code, open until its closing line.
 `resume`: read a session's stored log to continue it in a new process.
