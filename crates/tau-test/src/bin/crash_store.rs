@@ -151,6 +151,8 @@ fn main() {
     let mut _writing: Option<Connection> = None;
     let mut _held: Option<Store> = None;
     if mode == "committed" {
+        // The child's mode name, not the store's unit: the block is committed and the terminal
+        // stamped, so the store is settled when the lane kills it.
         if let Err(e) = commit_and_stamp(Path::new(&path)) {
             eprintln!("{e}");
             std::process::exit(1);

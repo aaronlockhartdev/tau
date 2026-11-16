@@ -22,6 +22,6 @@ the five EARS forms, and the `Apply to` line naming each delta's live leaf (`add
 `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`, `adopt_hash_anchor_editing`,
 `adopt_skills_convention`)
 - [ ] docs: the clause-layout sweep `adopt_block_log` carried here — obligation, `Acceptance:` and
-`Why:` adjacent, no blank line between them; the count and the file list are in
+`Why:` adjacent, no blank line between them; the count and the per-change split are in
 `changes/archive/2026-11-16-adopt_block_log/tasks.md`
 - [ ] spec-review (reviewer ticks)

@@ -10,7 +10,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `invariant`: a rule in `spec/index.md` or a domain index, with the check that proves it.
 `root`: tau's user file root, `~/.tau`; XDG config home overrides the config path.
 `fork`: a child session that copies a range of the parent's blocks and their requests.
-`steer`: send input to a running child, stored as a block in its log.
+`steer`: send input to a running session, stored as a block in its log.
 `roster`: the view listing a session's children with their states.
 `config layer`: the global config file, or the project file merged over it key by key.
 `anchor`: the five-character handle a read serves for one line of one file.
@@ -34,8 +34,8 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `state`: a pair of log sequences naming the context a block was built from.
 `stream`: the blocks one model call produces, closed at once by its provider.
 `event stream`: core's channel to the frontends: the events of a session, one per state change.
-`markdown block`: a renderable range of transcript markdown — paragraph, list, fence, table; gpui's block tree.
-`fence`: markdown's fenced code span, open until its closing line.
+`markdown block`: a renderable range of transcript markdown — paragraph, list, fence, table; the renderer's block tree.
+`fence`: a markdown block of fenced code, open until its closing line.
 `resume`: read a session's stored log to continue it in a new process.
 `payload`: a block's content: the text or result a single block carries.
 `run`: a session's blocks, in the log's sequence order.

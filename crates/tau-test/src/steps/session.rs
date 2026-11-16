@@ -8,7 +8,7 @@
 //! export writes JSONL, a run and a resume are answered from the log, and the terminal
 //! stamps a request's counts (R-session-08, 10, 11, 13, 39, 40, 46).
 //! A second process opening a store whose setup is locked is a child process as well
-//! (`bin/open_store.rs`), and the refusals it waited out are read back (R-session-33).
+//! (`bin/open_store.rs`), and the refusals it waited out are read back (R-session-33, 34).
 
 use crate::steps::{assert_clean, report};
 use crate::world::World;

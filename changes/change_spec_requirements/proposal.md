@@ -6,7 +6,7 @@ As of 2026-11-13, `spec/` carried 5 cross-cutting invariants and 0 requirements 
 
 ## Options
 
-- A. Invariants cite their proof: each line in `spec/index.md` names the gate, lint, lane, or review check that proves it, every other rule becomes a leaf requirement with an `R-` ID and a delta clause, and `spec-review` blocks a proposal whose owned rules have no delta. Evidence: measured here — the audit's 14 findings were all proposals with no delta file, and `spec-review` checked clauses inside a delta while never asking whether a delta existed. Cost: no dependencies, no runtime; 6 gate rows, ~6 words per invariant on any turn that loads the index.
+- A. Invariants cite their proof: each line in `spec/index.md` names the gate, lint, lane, or review check that proves it, every other rule becomes a leaf requirement with an `R-` ID and a delta clause, and `spec-review` blocks a proposal whose owned rules have no delta. Evidence: measured here — the audit's 14 findings were all proposals with no delta file, and `spec-review` checked clauses inside a delta while never asking whether a delta existed. Cost: no dependencies, no runtime; seven gate rows named across its tasks lines, ~6 words per invariant on any request that loads the index.
 - B. Give the invariants `R-` IDs and scenarios. Evidence: measured here — the index's own second bullet reads this way. Cost: 5 scenarios with no runnable harness (M0), and the proof of "core carries no UI logic" is a `cargo tree` run, not a Gherkin scenario.
 - C. Keep invariants as prose principles. Evidence: measured here — the status quo, in which 5 index lines already drifted into mechanics and duplication. Cost: every future index edit re-argues what belongs there.
 
@@ -23,4 +23,4 @@ Open: two lines keep this change open, each with the tasks line that tracks it.
   appear on. The scenario lands with `add_turn_loop`'s `R-agent-15` scenario, which prints the line; the
   `headless session` gate row stays `M0` until a tape drives it. The clause cannot archive before that tag
   runs, because a clause in `spec/` needs a resolvable acceptance ref (tasks.md:15).
-- spec-review has not ticked this change (tasks.md:19).
+- spec-review has not ticked this change (its `spec-review` line in `changes/change_spec_requirements/tasks.md`).

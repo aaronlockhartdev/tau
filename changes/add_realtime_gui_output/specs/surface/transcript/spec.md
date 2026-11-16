@@ -27,7 +27,7 @@ Acceptance: @R-surface-11
 
 ### R-surface-12  Only the tail re-parses
 
-WHILE a markdown block is open THE SYSTEM SHALL re-parse the tail block for each token delta.
+WHILE a markdown block is open THE SYSTEM SHALL re-parse the tail markdown block for each token delta.
 Acceptance: @R-surface-12
 
 ### R-surface-13  An open block shows as text

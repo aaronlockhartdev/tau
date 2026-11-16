@@ -106,7 +106,7 @@ holds 41..44, so the gap check counts open deltas and `spec -- --check` stays gr
 - [x] R-session-34: the bounded scenario runs the journal-upgrade leg, where a standing lock is
   refused on the spot, so its budget is 20 attempts of a 50 ms backoff (~1 s) and the 5 s beat
   leaves ~4 s for the refusal to land. The migration leg is the slow one, ~2.95 s: every attempt
-  burns its 100 ms busy timeout before the backoff, so a 3 s beat there leaves ~50 ms
+  burns its 100 ms busy timeout before the backoff, so a hypothetical 3 s beat there would leave ~50 ms of that budget, which is why the lane's beat is 400 ms
 - [x] R-session-07, R-session-30: the archive retires both clauses, and their scenario tags leave the
 corpus in the same commit — the late-event scenario is deleted and the killed-process scenario keeps
 `@R-session-06` alone, so no tag names a retired clause and no live clause loses its ref. The marker
@@ -140,7 +140,6 @@ next request), a block shows its own event time (`add_realtime_gui_output`), no 
 session block (`add_user_config`), and skill and context costs are counted per request
 (`adopt_skills_convention`, `adopt_context_file_loading`); `change_spec_requirements` names the
 committed-marker clause as retired. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e
-committed-marker clause as retired. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e
 events -e committed changes/` now answers only: the protocol's stream events (the provider's, numbered
 by R-protocol-01, and core's event stream, which R-surface-08 owns), the glossary's `event time`, the
 store's `commit` and git's `committed`, `add_turn_loop`'s own name, and the verb "turns"
@@ -155,8 +154,9 @@ clause whose `Acceptance:` sits in its own paragraph reads as a second obligatio
 `awk 'FNR==1{prev=""} /^Acceptance:/{if(prev=="" && pprev !~ /^###/) n++} {pprev=prev; prev=$0} END{print n+0}' $(find changes -name "*.md" -not -path "*/archive/*")`
 
 It prints 66 today: `add_subagent_support` 27, `adopt_context_file_loading` 10, `adopt_skills_convention` 8,
-`adopt_hash_anchor_editing` 8, `add_surface_components` 7, `add_test_lanes` 6. This sweep takes the 60 that
-belong to no change in this range; `add_test_lanes` re-formats its own 6. The form is the template's, in
+`adopt_hash_anchor_editing` 8, `add_surface_components` 7, `add_test_lanes` 6. This sweep takes the 60
+in the five changes this range does not own; `add_test_lanes` re-formats its own 6. The form is the
+template's, in
 `changes/_template/specs/_domain_/_area_/spec.md`
 
 Carried: the three lines above stay open, and each has a named home. The delta-format sweep and the
