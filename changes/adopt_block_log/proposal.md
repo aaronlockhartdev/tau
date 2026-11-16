@@ -18,7 +18,6 @@ streams output items with `added`/`delta`/`done` per part and reports true usage
 `response.completed` (community.openai.com field guide, 53 event types, read 2026-11-15). Chat Completions
 closes every block at `finish_reason` in one batch, and reports usage only in a final chunk, when asked
 (developers.openai.com reference, read 2026-11-15).
-closes every block at `finish_reason` in one batch, and reports usage only in a final chunk, when asked.
 
 State cannot be bytes on a mutable row: R-session-03's scan flags log content that appears in a
 mutable table, and R-session-10's Why rules derived structures to be rebuilt, not reconciled.
@@ -61,12 +60,16 @@ read for a resume.
 Rules land as: R-session-35..40 in `spec/session/storage/spec.md` (the block unit, the request row,
 state pointers, a block's request, the resume read, usage stamped at the terminal); R-session-02, 03,
 04, 05, 06, 08, 10, 28, 31, 32 modified in place to the new unit; R-session-07 and R-session-30
-retired with `Supersedes:`. Terms in `docs/glossary.md`: `block`, `request`, `injection`, `slot`
+retired with `Supersedes:`. A MODIFIED clause keeps its ID and is never renumbered; its heading follows the
+unit, so four headings re-word (`A log row names a turn` → `A block names a live request` and the three
+naming an event), and the scenarios keep their tags. Terms in `docs/glossary.md`
 added; `turn` and `committed marker` dropped; `log`, `run`, `session`, `steer` re-worded.
 Six open changes carry wording in the old unit — `add_subagent_support`, `add_realtime_gui_output`, `add_user_config`,
 `add_test_lanes`, `adopt_context_file_loading`, `adopt_skills_convention` — and are re-worded by this
 change, or the corpus ships two vocabularies.
-than wording: its R-session-19 promised to replace the oldest messages, and R-session-31 refuses any
+`adopt_observational_memory` needs more than wording: its `R-session-19` promised to replace the oldest
+messages, and `R-session-31` refuses any update to a log row, so that clause now appends an observation
+block naming the range it supersedes.
 update to a log row, so that clause now appends an observation block naming the range it supersedes.
 The `crates/tau-protocol/src/bin/contracts.rs:1` comment cites R-workspace-04, which is not a live
 clause (workspace runs 09..15): the citation moves to the invariant at `spec/index.md:7`.

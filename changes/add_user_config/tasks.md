@@ -10,5 +10,5 @@
 - [ ] Implement: TOML read, write, and layer merge in core via `toml_edit`
 - [ ] Implement: `notify` on both layers, announced on core's event stream
 - [ ] Implement: frontends subscribe; ACP exposes the same state
-- [ ] Implement: key table with defaults in the leaf spec
+- [ ] Implement: the key table, naming the queue cap, the token budget, wall clock limit and repeated-tool-call stop keys `R-agent-11` and `R-agent-12` ask for, and the observation and reflection thresholds `R-session-25` reads
 - [ ] spec-review before commit

@@ -32,5 +32,8 @@ measured by eval. The clauses are in
 
 Eval: on demand. Whether observations beat the raw message tail is a real-LLM quality question, so the suite runs by hand before a threshold changes.
 
-Open: the threshold defaults sit with the config change; the context cap policy that sets the observation
-threshold is `add_turn_loop`'s ground, and this change reads it from there.
+Open: the threshold defaults sit with the config change; the queue cap and the stop keys are the loop
+change's to ask for; where the `observations` slot sits in the prefix order is `add_turn_loop`'s `R-agent-13`
+to settle when this lands.
+the context cap that bounds the slot an observation fills is `add_turn_loop`'s to set; this change
+owns the threshold that triggers one.

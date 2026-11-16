@@ -4,7 +4,7 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 
 - [ ] gates: confirm `core has no UI logic`, `core has no runtime`, `core spawns nothing` stay green over the renamed schema (no new rows in this change)
 - [ ] R-session-35: delta clause in changes/adopt_block_log/specs/session/storage/spec.md, then rewrite the migration in place in `crates/tau-core/src/storage/mod.rs` — `events` → `blocks`, drop the `turn` table, the `committed` column and `events_no_late_insert`, add `requests`, rebuild `blocks_fts` (external content: drop, recreate, rebuild); pre-v1, so no store upgrade ships
-- [ ] R-session-35: `Store::commit(&Block)` — one transaction per block, store-wide sequence
+- [ ] R-session-35: `Store::commit(&Block)` — one transaction per block, and one transaction for the batch a stream closes at once, store-wide sequence
 - [ ] R-session-36: the request row (session, request, provider_id, model, four usage counts, reason) and its open write
 - [ ] R-session-37: state pointers on the block row; drop `turn.state` and `Store::turn_state`
 - [ ] R-session-38: the request column, nullable, and the user-input and injection cases in the lane
@@ -25,12 +25,17 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] R-session-30: delete the late-event scenarios; `blocks` immutability is R-session-31's
 - [ ] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [ ] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
-drop `turn` and `committed marker`; the glossary's `log` and `session` cells name the `events` table, which this change renames, and `run` reads "Stop the loop", a word the agent domain uses with no entry — all re-worded here
+- [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`; drop `turn` and `committed marker`;
+re-word `log`, `session`, `steer`, `session start output`; its `log` and `session` cells name the `events`
+table, which this change renames, and `run` reads "Stop the loop", a word the agent domain uses with no
+entry of its own — all of it re-worded here
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
 - [ ] re-word the open changes written in the old unit — `add_subagent_support` (its delta specs),
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
-`adopt_skills_convention`; a grep for `turn`, `event` and `committed` over `changes/*/` finds those six and
+a word-boundary grep (`grep -rilwE 'turn(s)?|event(s)?|committed' changes/*/`) finds those six and no
+other change; the hits in `_template`, `adopt_block_log`, `add_turn_loop`, `adopt_observational_memory`,
+`change_spec_requirements` and `spike_gpui_surface` are the new unit's own words, and `adopt_hash_anchor_editing`'s are `return`
 no other, so `adopt_hash_anchor_editing` needs nothing
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` and `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added; the row sizes and the two

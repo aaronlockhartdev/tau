@@ -39,6 +39,10 @@ changes, recorded here and in that change's tasks.md.
 - [ ] lane: `crates/tau-test/tests/features/agent.feature` driven by the in-process stub provider; steps in `crates/tau-test/src/steps/agent.rs`; `STEPS.md` regenerates
 - [ ] docs: `docs/stack.md` pins for `futures`, `tracing`, `uuid`, `petname`, and the row naming the provider leaf when it lands
 - [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops) and `delta` in its token sense, both used by these clauses and defined nowhere
-`spec/workspace/spec.md` gains 3
+- [ ] archive: lands after `adopt_block_log` (its clauses own blocks and requests) and before
+`change_spec_requirements`, which archives on the scenario `@R-workspace-08` this change's `R-agent-15`
+writes; at archive the counts move by what the deltas add — `spec/agent/spec.md` +15, `spec/protocol/spec.md`
++3, `spec/tools/spec.md` +2, `spec/workspace/spec.md` +3, `spec/session/storage/spec.md` +4 — read off the
+files, with `spec/session/spec.md`'s leaf cell and `spec/index.md`'s Corpus count moved to match
 - [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool, spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies current, no local state tracked, toolchain pinned, core has no UI logic, core has no runtime, core spawns nothing, core has no HTTP client, core installs no subscriber, lints); rows in state M0 — live output under load, headless session, desktop — reported `skipped (M0)`; manual rows — workspace layout, eval — reported by hand
 - [ ] spec-review (reviewer ticks)

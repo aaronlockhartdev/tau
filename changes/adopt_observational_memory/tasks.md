@@ -10,4 +10,6 @@
 - [ ] Implement: observer and reflector prompts
 - [ ] Eval: observations versus the raw message tail, on demand
 - [ ] Storage: the naming an observation carries (which range it supersedes) is a column of the memory leaf, with the leaf's own spec, and no clause here promises it
+- [ ] docs: `docs/glossary.md` — `observation` and `reflection` as appended blocks naming a range, not a
+condensation stored elsewhere; the live row says a message tail is replaced, which is the wording this change retires
 - [ ] spec-review before commit

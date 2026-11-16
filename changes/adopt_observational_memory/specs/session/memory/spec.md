@@ -1,6 +1,6 @@
 # Delta: session/memory
 
-## ADDED
+## ADDED Requirements
 
 ### R-session-19  Observations supersede a range
 
@@ -46,7 +46,8 @@ Why: a changed prefix invalidates the provider's prompt cache, which is the cost
 
 ### R-session-25  Thresholds come from config
 
-THE SYSTEM SHALL read the observation and reflection thresholds from user config, at the defaults listed in `spec/config/reload/spec.md`.
+THE SYSTEM SHALL read the observation and reflection thresholds from user config, at the defaults the
+config change's key table lists (R-config-09).
 
 Acceptance: @R-session-25
 Why: a threshold baked into code cannot rise on a machine with room and fall on one without.
