@@ -21,7 +21,8 @@ Why: usage is a provider number the log cannot derive, and a request that stream
 WHEN the store records a block THE SYSTEM SHALL record the state as pointers into `blocks`, on the `blocks`
 row.
 Acceptance: @R-session-37
-Why: a cached context in a mutable row needs a reconciliation path, and pointers rebuild from the log alone.
+Why: a row of pointers is not payload text, so R-session-03's scan stays green, and the context rebuilds
+from the log alone.
 
 ### R-session-38  A block names its source
 
@@ -67,14 +68,6 @@ the `sessions` and `requests` tables.
 Acceptance: @R-session-03
 Why: a copy of log content in a mutable table needs a reconciliation path, and it runs on the crash day.
 
-### R-session-13  The harness queries the store
-
-WHEN the eval harness reads a run THE SYSTEM SHALL answer from store queries over blocks, not a per-tool
-log format.
-the position it holds in the log.
-Acceptance: @R-session-13
-Why: a per-tool log format would be a second record of the run, and it drifts from the log the store keeps.
-
 ### R-session-04  Readers never hold across a commit
 
 WHILE a block commit is in flight THE SYSTEM SHALL hold no open read transaction.
@@ -109,6 +102,13 @@ Why: the index is derived from the log and rebuilt from it, so its tables are no
 WHEN a session is exported THE SYSTEM SHALL write one JSONL line per block and leave the store unchanged.
 Acceptance: @R-session-11
 Why: the export is the log in another form, so a unit the export invents is a second vocabulary.
+
+### R-session-13  The harness queries the store
+
+WHEN the eval harness reads a run THE SYSTEM SHALL answer from store queries over blocks, not a per-tool
+log format.
+Acceptance: @R-session-13
+Why: a per-tool log format would be a second record of the run, and it drifts from the log the store keeps.
 
 ### R-session-28  The store keeps the event time
 

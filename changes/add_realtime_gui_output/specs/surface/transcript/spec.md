@@ -62,7 +62,7 @@ Why: a setext underline restyles the lines above it, which breaks a closed block
 
 WHILE tokens stream at full rate THE SYSTEM SHALL accept typed text, IME composition, and paste in the prompt field.
 
-Acceptance: gate live output under load
+Acceptance: gate desktop
 
 ### R-surface-18  Frame cost stays inside the spike's budget
 

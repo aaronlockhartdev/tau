@@ -21,7 +21,8 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
 - [ ] The mutable-state read in `crates/tau-test/src/steps/session.rs:579` names `sessions` and `turn`; it
 names `sessions` and `requests` after this change, and R-session-03's clause says the two by name
-- [ ] R-session-13:
+- [ ] R-session-13: the harness read answers from store queries over blocks, and `RunTurn`'s per-turn state
+is dropped
 - [ ] R-session-28: the event time lands on the block row
 - [ ] R-session-31: the update and delete triggers name `blocks`
 - [ ] R-session-32: the composite FK to `requests`, and the orphan-row refusal
@@ -41,7 +42,8 @@ produced", `turn` reads "one request to the model and what it produced, numbered
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
 - [ ] docs: sweep the bare `## ADDED` markers to `## ADDED Requirements` in the deltas this change does not
 touch — `add_subagent_support` (4 leaves), `add_surface_components`, `add_test_lanes`,
-`adopt_context_file_loading`, `adopt_hash_anchor_editing`, `adopt_skills_convention`
+`adopt_context_file_loading`, `adopt_hash_anchor_editing`, `adopt_skills_convention`, and the two
+`add_user_config` headings over the cap (`R-config-01`, `R-config-05`)
 - [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading` and
 `adopt_skills_convention`. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e

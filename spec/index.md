@@ -41,7 +41,7 @@ Corpus: 27 requirements. Each requirement arrives through a change.
 | `spec/<domain>/<area>/spec.md` | leaf: EARS requirements + acceptance refs | implementing that area |
 | `changes/<id>/` | active change: proposal, deltas, tasks | before coding a behaviour change |
 | `changes/archive/` | closed changes, the record of *why* | history of a rule |
-| `crates/` | workspace members, listed in `spec/workspace/spec.md` | any code |
+listed in `docs/stack.md`
 | `crates/tau-test/tests/features/` | Gherkin acceptance, tagged `@R-…` | writing/reading acceptance |
 | `crates/tau-test/tests/features/STEPS.md` | allowed step vocabulary | before writing a scenario |
 | `crates/tau-test/suites/` | eval suites, run by hand; no directory until a suite lands | deciding whether a feature is worth building |

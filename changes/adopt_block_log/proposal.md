@@ -61,7 +61,7 @@ wrong read for a resume.
 
 Rules land as R-session-35..40, 45 and 46 in `spec/session/storage/spec.md` (the block unit, the
 request row, state pointers, a block's request, the resume read, usage stamped at the terminal, the
-slot on the row, the slot read), with R-session-02, 03, 04, 05, 06, 08, 10, 11, 28, 31 and 32 modified
+the slot read), with R-session-02, 03, 04, 05, 06, 08, 10, 11, 13, 28, 31 and 32 modified in place to the new
 in place to the new unit, and R-session-07 and R-session-30 retired with `Supersedes:`. A MODIFIED
 clause keeps its ID and is never renumbered, so four of its headings move with the unit: `Event and
 state commit together` to `Block and state commit together`, `Readers never hold across a turn` to
