@@ -28,9 +28,9 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `request`: one round-trip to a provider: its model, its usage, its terminal reason.
 `injection`: a block the runtime adds to the context, not text from a user.
 `slot`: the context position a block names, such as a prompt part.
-`user input`: steering text that arrives mid-run, stored as a block.
+`user input`: text from a user that reaches the log outside a round-trip, stored as a block.
 `usage`: a request's counts: input, cache read, cache write, output.
-`terminal`: the reason a request ended, and the last block of its run.
+`terminal`: the reason a request ended, stamped on its row together with its counts.
 `state`: a pair of log sequences naming the context a block was built from.
 `stream`: the blocks one model call produces, closed at once by its provider.
 `resume`: read a session's stored log to continue it in a new process.

@@ -122,8 +122,9 @@ pub struct Block<'a> {
     pub payload: &'a str,
     pub slot: Option<&'a str>,
     /// The state this block leaves, as the first and last sequences of the context it was built
-    /// from. Both name blocks the session has already written: the log is append-only, so a
-    /// pointer to a later sequence is refused, as is half a pair (R-session-37).
+    /// from. Each names a block of the carrying session, at that row's own sequence at the latest:
+    /// the guard runs after the row lands, so a pointer to a later sequence is refused, as is half
+    /// a pair and a pointer into another session's log (R-session-37).
     pub state_start: Option<i64>,
     pub state_end: Option<i64>,
 }
@@ -252,8 +253,8 @@ fn migrations() -> Migrations<'static> {
              FOREIGN KEY (session, request) REFERENCES requests (session, request)
          );
          CREATE INDEX blocks_session ON blocks (session, seq);
-         -- A state names blocks the session has already written: the log is append-only, so a
-         -- pointer to a later block is unwritable, not merely useless.
+         -- A state names blocks of its own session, at the carrying row's sequence at the latest:
+         -- the log is append-only, so a pointer to a later block is unwritable, not merely useless.
         CREATE TRIGGER blocks_state_named AFTER INSERT ON blocks
          WHEN NEW.state_start IS NOT NULL AND (
              NOT EXISTS (SELECT 1 FROM blocks b

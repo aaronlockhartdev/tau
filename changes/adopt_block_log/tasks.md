@@ -15,7 +15,8 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-45: the slot on the block row, and an injection block that fills one
 - [x] R-session-46: the slot read, answering a session's blocks by the slot they record
 - [x] R-session-40: the terminal stamp, and a request row with a reason and no block
-- [x] R-session-02: the block-and-state transaction, proved by the crash child
+- [x] R-session-02: the block transaction — every block row of a commit, all of it or none — proved by
+  the crash child
 - [x] R-session-03: the scan's mutable set becomes `sessions` and `requests` in `crates/tau-test/src/steps/session.rs`
 - [x] R-session-04: the in-flight window scenario at block scale, with the checkpoint probe kept after the writer closes
 - [x] R-session-05: `synchronous = NORMAL` stated for a committed block, not a committed turn (@R-session-05)
@@ -25,7 +26,7 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
 - [x] The mutable-state read — `MUTABLE` in `crates/tau-test/src/steps/session.rs` — names `sessions`
   and `requests`, the tables a store setup migrates; the R-session-03 scan is the step that reads
-  both names, while the setup-race steps watch the journal mode and the `blocks` table
+  both names; the migrations leg reads both, the journal-upgrade leg only the journal mode
 - [x] R-session-13: the store side answers a run from queries over blocks, proved by the lane's
   harness-read step over `run` and `latest_request`. The `eval` lane is `AGENTS.md`'s `manual` row,
   and no `eval` bin or suite file is in the tree, so nothing proves the harness end to end
@@ -35,9 +36,9 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-32, 37: the keys bind every row a commit writes — `blocks.session` references
   `sessions`, a state is stored as a pair and in order (`CHECK`), and a trigger refuses a pointer
   naming no block of the session. Scenarios refuse a block for an unrecorded session (mutation:
-  dropping the reference answers `the block naming an unrecorded session was written`), half a
+  dropping the reference answers `block naming an unrecorded session was written`), half a
   state, a pair that runs backwards, and a pair naming nothing (mutation: `RAISE(IGNORE)` answers
-  `the block whose state names no block was written`)
+  `block whose state names no block was written`)
 - [x] R-session-37, R-session-08: a fork re-points a state by the pointer's rank among the copied
   sequences, and drops a pair naming a block the range leaves behind. Scenarios fork over the whole
   range and over part of it; `a_fork_moves_the_pointers_across_a_gap` forks across a gap another
@@ -57,9 +58,10 @@ this one, so the session range is split until that change archives — the gap c
   the request's cache read count is Some(70), expected 900; the request's cache write count is
   Some(900), expected 70`)
 - [x] R-session-37: the guard's four arms each have a check of their own, each proved by deleting the
-  arm. The pair's wholeness: the two half-pair scenarios (`the block carrying half a state was
-  written`). Its direction: `the block whose state runs backwards was written`. A pointer naming
-  nothing at its end: `the block whose state ends on no block was written`. A start naming nothing
+  arm. The pair's wholeness: `block carrying half a state was written` for a start with no end,
+  and `block whose state has an end and no beginning was written` for the half the other way.
+  Its direction: `block whose state runs backwards was written`. A pointer naming
+  nothing at its end: `block whose state ends on no block was written`. A start naming nothing
   while the end names a row needs a gap in the session's sequences, so
   `a_state_pointer_whose_start_names_nothing_is_refused` covers it; neutering the start disjunct is
   caught by that test and nothing else. A pointer into a sibling session's sequence needs two
@@ -109,12 +111,13 @@ the clause; `blocks` immutability is R-session-31's
 - [x] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [x] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
 - [x] docs: `docs/glossary.md` adds `block`, `request`, `injection`, `slot`, `user input`, `usage`,
-  `terminal`, `state`, `context` and `JSONL`; drops `turn` and `committed marker`; re-words `fork`,
+  `terminal`, `state`, `stream`, `resume`, `payload`, `context` and `JSONL`; drops `turn` and
+  `committed marker`; re-words `fork`,
   `log`, `run`, `session`, `steer`, `event time` and `session start output`. The live cells named
   `events`, turns and the committed marker — the unit this change retires — and `fork` named a
   prompt cache, which is the subagent change's unit
 - [x] docs: `docs/stack.md` Storage row names `blocks` and `requests`, the state as a pair of
-  pointers into the log, and the ranges the storage leaf covers: R-session-01..06, 08, 10, 11, 13,
+  pointers into the log, and the ranges the storage leaf covers at its archive: R-session-01..06, 08, 10, 11, 13,
   18, 28..46, with 07 and 30 retiring at this change's archive and 41..44 landing from
   `add_turn_loop`
 - [x] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:66` and `:74` cite R-workspace-04, a clause

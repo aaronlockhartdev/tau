@@ -116,7 +116,8 @@ pub(crate) fn open_at(world: &mut World, path: PathBuf) {
             return;
         }
     }
-    // A session is open, the trigger R-session-01 speaks of.
+    // A session is open, in R-session-01's sense: this process holds its path and no second
+    // connection writes the store while it does.
     if let Some(store) = world.store.as_ref()
         && let Err(e) = store.open_session(SESSION)
     {
