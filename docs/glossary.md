@@ -15,7 +15,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `config layer`: the global config file, or the project file merged over it key by key.
 `anchor`: the five-character handle a read serves for one line of one file.
 `outline`: a file's anchored declaration rows, bodies read on demand.
-`observation`: a condensation of a session's oldest messages, stored in the session.
+`observation`: a condensation of a session's oldest messages, appended to its observations slot.
 `reflection`: a condensation of observations.
 `tape`: a recorded model transcript that answers calls in the behaviour lane.
 `layer`: the agent-directory level or the project level of a config, context, or skill file.
@@ -25,7 +25,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `event time`: the moment core produced a block or emitted a stream event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any block.
 `block`: one item of a conversation, stored as one row of the log; the store's unit.
-`request`: one round-trip to a provider: its model, its usage, its terminal reason.
+`request`: one provider round-trip: the blocks it sent, its provider and model, state, usage and terminal.
 `injection`: a block the runtime adds to the context, not text from a user.
 `slot`: the context position a block names, such as a prompt part.
 `user input`: text from a user that reaches the log outside a round-trip, stored as a block.

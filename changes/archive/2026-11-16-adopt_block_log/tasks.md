@@ -118,12 +118,13 @@ is absent from the schema and a scenario reads that absence
   `committed marker`; re-words `fork`,
   `log`, `run`, `session`, `steer`, `event time` and `session start output`. The live cells named
   `events`, turns and the committed marker — the unit this change retires — and `fork` named a
-  prompt cache, which is the subagent change's unit
+  prompt cache, which is the subagent change's unit. The proposal's term list predates this sweep;
+  this list is the tree's
 - [x] docs: `docs/stack.md` Storage row names `blocks` and `requests`, the state as a pair of
   pointers into the log, and the ranges the storage leaf covers at its archive: R-session-01..06, 08, 10, 11, 13,
   18, 28..46, with 07 and 30 retiring at this change's archive and 41..44 landing from
   `add_turn_loop`
-- [x] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:66` and `:74` cite R-workspace-04, a clause
+- [x] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:67` and `:75` cite R-workspace-04, a clause
   `change_spec_requirements` issues and that goes live at its archive; the comments cite the clause
   where it applies and carry no marker of their own, and the citation stays (R-workspace-04)
 - [ ] docs: sweep the deltas this change does not re-format: bare `## ADDED` markers to `## ADDED Requirements`
@@ -135,14 +136,17 @@ is absent from the schema and a scenario reads that absence
 forms (`R-context-04`, `R-tools-16`, `R-tools-23`, `R-tools-28`, `R-surface-02`, `R-harness-08`); and the
 `Apply to` line naming the live leaf each delta applies to, missing from those six deltas
 - [x] re-worded: the seven open changes no longer speak the retired unit as a live concept — directed
-messages are blocks in each participant's log (`add_subagent_support`, and its `send` queues to the
+messages are blocks in each participant's log (`add_subagent_support`, and its client `prompt` queues to the
 next request), a block shows its own event time (`add_realtime_gui_output`), no config value reaches a
 session block (`add_user_config`), and skill and context costs are counted per request
 (`adopt_skills_convention`, `adopt_context_file_loading`); `change_spec_requirements` names the
 committed-marker clause as retired. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e
-events -e committed changes/` now answers only: the protocol's stream events (the provider's, numbered
-by R-protocol-01, and core's event stream, which R-surface-08 owns), the glossary's `event time`, the
-store's `commit` and git's `committed`, `add_turn_loop`'s own name, and the verb "turns"
+events -e committed changes/` answers 18 files, every hit one of: a stream event (the provider's,
+numbered by R-protocol-01; a child's, in `add_subagent_support`'s acp delta; core's event stream,
+which R-surface-08 owns), the glossary's `event time`, the store's `commit` or git's `committed`,
+the noun in a quote of the retired design (`change_spec_requirements`'s "the store of turns and
+events"), `add_turn_loop`'s own name, and the verb "turns". That change's prose still says "the turn
+loop" for the loop it builds, and its tasks carry the sweep to "the request loop"
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.

@@ -110,7 +110,7 @@ Why: a block is committed by the transaction that inserts it, so a marker closed
 
 ### R-session-36  A request records one round-trip
 
-THE SYSTEM SHALL record one `requests` row per provider round-trip, with its model, usage, and terminal reason, and no payload.
+THE SYSTEM SHALL record one `requests` row per provider round-trip, with its provider, model, usage, and terminal reason, and no payload.
 Acceptance: @R-session-36
 Why: usage is a provider number the log cannot derive, and a request that streamed no block is a fact.
 
