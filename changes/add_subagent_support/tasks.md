@@ -18,7 +18,8 @@ lands
 - [ ] archive: four new leaves, so four domain index Leaves cells and the Corpus count move, by the numbers
 read off the files — `spec/tools/spec.md` gains `delegation/spec.md (13 requirements)` as its first leaf,
 `spec/acp/spec.md` `subagent/spec.md (6 requirements)` as its first, `spec/surface/spec.md`
-`roster/spec.md (4 requirements)` as its first, `spec/session/spec.md` `child/spec.md (4 requirements)`
-beside `storage`; no index count line moves, and the Corpus count moves by 27
+`roster/spec.md (4 requirements)` — `add_realtime_gui_output` opens that index with `transcript` first, so
+read the cell at archive rather than assuming an empty one — `spec/session/spec.md`
+`child/spec.md (4 requirements)` beside `storage`; no index count line moves, and the Corpus count moves by 27
 - [ ] check: `cargo run -p tau-tools --bin gates`; rows in state M0 reported `skipped (M0)`, manual rows by hand
 - [ ] spec-review before commit
