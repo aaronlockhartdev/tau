@@ -2,7 +2,8 @@
 
 - [x] audit the corpus against the requirement-focused standard
 - [x] index invariants name their proof; mechanics and duplication cut
-- [x] gates: `core has no UI logic`, `contracts current`, `live output under load`, `steps current`
+- [x] gates: `core has no UI logic`, `contracts current`, `steps current` PASS; `live output under load`
+reported `skipped (M0)` — its row's state is `M0` and nothing implements it
 - [x] skills: check 11b, `Why:` enumeration, index edited in place
 - [x] templates: delta clause, step definition, `Why:` under ADDED
 - [x] `workspace` domain row and stub
@@ -12,11 +13,12 @@
 - [x] R-harness-03: `crates/tau-test` bin `steps` generates crates/tau-test/tests/features/STEPS.md from the step definitions; the `steps current` gate compares them
 - [x] R-harness-11: a withdrawal inside its own change keeps its number and needs nothing at archive (crates/tau-tools/src/bin/spec.rs, `## REMOVED Requirements`)
 - [x] check: spec --check · contracts --check · steps --check · doc lint · links
-- [ ] archive: after `add_turn_loop`, whose R-agent-15 scenario carries `@R-workspace-08`; the deltas add 4
-harness and 8 workspace clauses, so at archive `spec/harness/spec.md`'s count cell gains 4,
-`spec/workspace/spec.md`'s gains 8, and `spec/index.md`'s Corpus count gains 12 — each number read off the
-file at archive, since `add_turn_loop` lands its own clauses in both indexes first. No Leaves cell moves:
-both deltas are domain indexes
+- [ ] archive: after `add_turn_loop`, whose R-agent-15 scenario carries `@R-workspace-08`. The deltas add 4
+harness clauses and 8 workspace clauses, and the counts move from a stated source: `spec/harness/spec.md`'s
+count is 1 today and no other open delta adds clauses to that index (add_test_lanes fills the `lanes` leaf),
+so it reads 5 here; `spec/workspace/spec.md` is 7 today and `add_turn_loop` lands R-workspace-16..19 first,
+so 11 → 19; `spec/index.md`'s Corpus is 33, and `add_turn_loop` lands 28 clauses first, so 61 → 73. Read each
+off the file at archive. No Leaves cell moves: both deltas are domain indexes
 - [x] Implement: `<project>/.tau/.gitignore` containing `*`, written once, and the store path inside `.tau` (`crates/tau-core/src/project.rs`; scenarios `@R-workspace-06,07` in crates/tau-test/tests/features/workspace.feature, `@R-session-18` in crates/tau-test/tests/features/session.feature)
 - [x] docs: the six-word heading cap, swept across the open deltas: 17 ADDED headings re-worded
 (`add_subagent_support` 9, `add_surface_components` 3, `add_user_config` 2, `add_test_lanes` 1,
