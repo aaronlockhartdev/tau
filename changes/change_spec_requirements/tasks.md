@@ -12,10 +12,11 @@
 - [x] R-harness-03: `crates/tau-test` bin `steps` generates crates/tau-test/tests/features/STEPS.md from the step definitions; the `steps current` gate compares them
 - [x] R-harness-11: a withdrawal inside its own change keeps its number and needs nothing at archive (crates/tau-tools/src/bin/spec.rs, `## REMOVED Requirements`)
 - [x] check: spec --check · contracts --check · steps --check · doc lint · links
-- [ ] archive: after `add_turn_loop`, whose R-agent-15 scenario carries `@R-workspace-08`; at archive the
-cells move by the numbers read off the files — `spec/harness/spec.md` 1 → 5, `spec/workspace/spec.md` 7 → 15,
-`spec/index.md`'s Corpus count 33 → 45, its harness and workspace Leaves cells unchanged (both deltas are
-domain indexes)
+- [ ] archive: after `add_turn_loop`, whose R-agent-15 scenario carries `@R-workspace-08`; the deltas add 4
+harness and 8 workspace clauses, so at archive `spec/harness/spec.md`'s count cell gains 4,
+`spec/workspace/spec.md`'s gains 8, and `spec/index.md`'s Corpus count gains 12 — each number read off the
+file at archive, since `add_turn_loop` lands its own clauses in both indexes first. No Leaves cell moves:
+both deltas are domain indexes
 - [x] Implement: `<project>/.tau/.gitignore` containing `*`, written once, and the store path inside `.tau` (`crates/tau-core/src/project.rs`; scenarios `@R-workspace-06,07` in crates/tau-test/tests/features/workspace.feature, `@R-session-18` in crates/tau-test/tests/features/session.feature)
 - [x] docs: the six-word heading cap, swept across the open deltas: 17 ADDED headings re-worded
 (`add_subagent_support` 9, `add_surface_components` 3, `add_user_config` 2, `add_test_lanes` 1,

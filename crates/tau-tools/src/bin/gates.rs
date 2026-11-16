@@ -56,7 +56,9 @@ fn cells(line: &str) -> Vec<String> {
 }
 
 /// A row's command is the first backticked span of its command cell; text
-/// around it is prose.
+/// around it is prose. A row whose command spans two backticks runs half of it,
+/// so a gate command lives in exactly one span (scaffold_workspace's record of
+/// that bug).
 fn first_backtick(cell: &str) -> String {
     let mut parts = cell.split('`');
     parts.next();
