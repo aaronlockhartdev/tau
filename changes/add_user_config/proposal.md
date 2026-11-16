@@ -21,7 +21,7 @@ Reload rule: any key that can be applied live is applied live. A key that needs 
 
 ## Consequences
 
-Config is read in core, and the frontends subscribe to it, so ACP exposes the same state as the desktop app. The file lives outside the repo, so a secret is never committed, and it never enters a session log. Hot reload is testable through `tau-test` by writing the file mid-scenario. The clauses are in `changes/add_user_config/specs/config/reload/spec.md` as `R-config-01..13`, archived to `spec/config/reload/spec.md`. IDs come from `cargo run -p tau-tools --bin spec -- id config`, and are renumbered here because no scenario has cited them.
+as `R-config-01..14`, archived to `spec/config/reload/spec.md`
 
 Eval: none needed. Reload and key application are deterministic, and the behaviour lane covers them.
 

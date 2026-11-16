@@ -58,10 +58,17 @@ THE SYSTEM SHALL write no config value into a session event.
 Acceptance: @R-config-10
 Why: the file carries provider keys, and events are exported, copied, and shared.
 
-### R-config-11  A table merges, an array replaces
+### R-config-11  A table merges key by key
 
-WHEN the project layer sets a key whose global value is a table THE SYSTEM SHALL merge that table key by key, and SHALL replace an array wholesale.
+WHEN the project layer sets a key whose global value is a table THE SYSTEM SHALL merge that table key by
+key.
 Acceptance: @R-config-11
+Why: a whole-table replace makes a project file erase a provider the user set globally.
+
+### R-config-14  An array replaces wholesale
+
+WHEN the project layer sets a key whose global value is an array THE SYSTEM SHALL replace that array.
+Acceptance: @R-config-14
 Why: appending arrays across layers makes a project's tool list depend on an unseen global file.
 
 ### R-config-12  Either layer reloads live
