@@ -39,6 +39,12 @@ WHEN a request reaches a terminal event THE SYSTEM SHALL stamp its usage and rea
 Acceptance: @R-session-40
 Why: one API reports input tokens at the open and another only at the close, so a null is a fact.
 
+### R-session-45  A slot's blocks answer
+
+THE SYSTEM SHALL answer the blocks of a session that name a given slot.
+Acceptance: @R-session-45
+Why: a resume rebuilds observations, and `blocks_after` reaches only what follows the newest request.
+
 ## MODIFIED Requirements
 
 ### R-session-02  Block and state commit together
@@ -81,6 +87,12 @@ Why: every block names its request, so a copied range without those rows is a br
 WHEN a user searches sessions THE SYSTEM SHALL answer from the FTS5 index over stored blocks.
 Acceptance: @R-session-10
 Why: the index is derived from the log and rebuilt from it, so its tables are no place for a fact that needs reconciling.
+
+### R-session-11  Export writes JSONL, the store stays
+
+WHEN a session is exported THE SYSTEM SHALL write one JSONL line per block and leave the store unchanged.
+Acceptance: @R-session-11
+Why: the export is the log in another form, so a unit the export invents is a second vocabulary.
 
 ### R-session-28  The store keeps the event time
 

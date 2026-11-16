@@ -58,7 +58,10 @@ they name (R-session-08), `export_jsonl` writes block lines. Two reads land: the
 session, and the blocks after a sequence — `Store::run` materialises every payload and is the wrong
 read for a resume.
 
-Rules land as R-session-35..40 in `spec/session/storage/spec.md` (the block unit, the request row,
+Rules land as R-session-35..40 and 45 in `spec/session/storage/spec.md` (the block unit, the request row,
+state pointers, a block's request, the resume read, usage stamped at the terminal, the slot read), with
+R-session-02, 03, 04, 05, 06, 08, 10, 11, 28, 31 and 32 modified in place to the new unit, and R-session-07
+and R-session-30 retired with `Supersedes:`.
 state pointers, a block's request, the resume read, usage stamped at the terminal), with R-session-02,
 03, 04, 05, 06, 08, 10, 28, 31 and 32 modified in place to the new unit, and R-session-07 and
 R-session-30 retired with `Supersedes:`. A MODIFIED clause keeps its ID and is never renumbered, so

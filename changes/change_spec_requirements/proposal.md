@@ -20,7 +20,7 @@ Open: two lines keep this change open, each with the tasks line that tracks it.
 
 - R-workspace-08 (the write is disclosed) carries acceptance `@R-workspace-08`, and no scenario
   carries that tag: nothing prints session start output, so the disclosure has no surface to
-  appear on. The scenario lands with the `headless session` gate row, which is `M0`. The clause
-  cannot archive before that tag runs, because a clause in `spec/` needs a resolvable acceptance
-  ref (tasks.md:17).
-- spec-review has not ticked this change (tasks.md:15).
+  appear on. The scenario lands with `add_turn_loop`'s `R-agent-15` scenario, which prints the line; the
+  `headless session` gate row stays `M0` until a tape drives it. The clause cannot archive before that tag
+  runs, because a clause in `spec/` needs a resolvable acceptance ref (tasks.md:15).
+- spec-review has not ticked this change (tasks.md:16).
