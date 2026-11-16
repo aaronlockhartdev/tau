@@ -19,12 +19,17 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] R-session-08: `Store::fork` copies blocks and the request rows they name, and fork-resume appends without duplicating a copied block
 - [ ] R-session-10: the FTS index over `blocks`, with the search scenarios unchanged in result
 - [ ] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
-- [ ] R-session-13: `Store::run` answers requests with their blocks; drop `RunTurn`'s per-turn state
+- [ ] The mutable-state read in `crates/tau-test/src/steps/session.rs:579` names `sessions` and `turn`; it
+names `sessions` and `requests` after this change, and R-session-03's clause says the two by name
+- [ ] R-session-13:
 - [ ] R-session-28: the event time lands on the block row
 - [ ] R-session-31: the update and delete triggers name `blocks`
 - [ ] R-session-32: the composite FK to `requests`, and the orphan-row refusal
-- [ ] R-session-07: delete the `turn.committed` column, the `events_no_late_insert` trigger, the `RunTurn.committed` field, and the scenarios tagged for it
-- [ ] R-session-30: delete the late-event scenarios; `blocks` immutability is R-session-31's
+- [ ] R-session-07: delete the `turn.committed` column, the `events_no_late_insert` trigger and the
+`RunTurn.committed` field, and the scenarios tagged `@R-session-07` in the same archive commit that retires
+the clause — the tag and the ref leave the corpus together, so `spec --check` stays green
+- [ ] R-session-30: the late-event scenarios tagged `@R-session-30` go in the same archive commit that retires
+the clause; `blocks` immutability is R-session-31's
 - [ ] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [ ] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
 - [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`, `user input`, `usage`, `terminal`
@@ -34,6 +39,9 @@ produced", `turn` reads "one request to the model and what it produced, numbered
 `session` names turns: all of it is this change's unit
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
+- [ ] docs: sweep the bare `## ADDED` markers to `## ADDED Requirements` in the deltas this change does not
+touch — `add_subagent_support` (4 leaves), `add_surface_components`, `add_test_lanes`,
+`adopt_context_file_loading`, `adopt_hash_anchor_editing`, `adopt_skills_convention`
 - [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading` and
 `adopt_skills_convention`. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e

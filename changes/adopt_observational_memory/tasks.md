@@ -3,8 +3,6 @@
 - [ ] Order: `adopt_block_log` archives first — R-session-19 and R-session-20 name blocks, which is that
 change's unit; `add_turn_loop` lands the request loop; `R-session-26`'s count reaches a frontend on the
 event stream `add_realtime_gui_output` owns (`R-surface-08`), so it lands after that change too;
-`R-session-23` reads the context files `adopt_context_file_loading` loads
-change's unit; `add_turn_loop` lands the request loop and the counts a frontend reads; `R-session-23` reads
 the context files `adopt_context_file_loading` loads
 - [ ] Scenario: R-session-19 and 20: the two thresholds, and the range an observation names
 - [ ] Scenario: R-session-21, 22 and 25: the session's own model, the config budget, the threshold numbers

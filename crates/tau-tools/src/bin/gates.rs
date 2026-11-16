@@ -58,9 +58,6 @@ fn first_backtick(cell: &str) -> String {
 }
 
 /// The rows of the §Gates table: from the `## Gates` heading to the next
-/// heading. The header row and the `|---|` separator are not gates: their state
-/// is not a known state.
-/// The rows of the §Gates table: from the `## Gates` heading to the next
 /// heading. A row the lane cannot run — wrong cell count, a state that is not
 /// one of the three — comes back as a finding, so a gate is never dropped
 /// silently. The header row and the `|---|` separator are not gate rows.

@@ -14,7 +14,7 @@ Why: a subscriber's non-blocking writer starts a thread, and core starts no thre
 
 THE SYSTEM SHALL write log output to stderr, at the default level `info`.
 Acceptance: @R-workspace-17
-Why: a surface owns its own pane, and a log on stdout steals a line from the reader.
+Why: a surface owns its own pane, and a log on stdout lands where its reader is writing.
 
 ### R-workspace-18  Core speaks no HTTP
 

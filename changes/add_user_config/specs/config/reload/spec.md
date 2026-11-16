@@ -1,6 +1,6 @@
 # Delta: config/reload
 
-## ADDED Requirements Requirements
+## ADDED Requirements
 
 ### R-config-01  One root for a user's global files
 
@@ -8,13 +8,13 @@ THE SYSTEM SHALL keep a user's global files under one root, `~/.tau` by default.
 
 Acceptance: @R-config-01
 
-### R-config-02  XDG config home replaces the global file
+### R-config-02  XDG home replaces the global file
 
 WHEN `$XDG_CONFIG_HOME` is set and non-empty THE SYSTEM SHALL read the global layer from `$XDG_CONFIG_HOME/tau/config.toml` in place of `<root>/config.toml`.
 
 Acceptance: @R-config-02
 
-### R-config-03  A project file stacks on the global file
+### R-config-03  A project file stacks on global
 
 WHERE `<project>/.tau/config.toml` exists THE SYSTEM SHALL read configuration from the merge of the global layer and that file, the project value winning.
 
@@ -33,14 +33,14 @@ WHERE a config key takes effect live THE SYSTEM SHALL apply a changed value to t
 
 Acceptance: @R-config-05
 
-### R-config-06  A restart key is marked in the file
+### R-config-06  A restart key is marked
 
 THE SYSTEM SHALL mark every config key that takes effect only after a restart in the config file.
 
 Acceptance: @R-config-06
 Why: the file comment is the only place a user reads the difference before changing the key.
 
-### R-config-07  A restart key is announced at the change
+### R-config-07  A restart key is announced
 
 WHEN a restart-required key changes THE SYSTEM SHALL report that the new value awaits a restart.
 
@@ -59,7 +59,7 @@ WHEN a session starts THE SYSTEM SHALL accept every config key listed in `spec/c
 Acceptance: @R-config-09
 Why: a key absent from the table is set by reading source, so the table is the key list.
 
-### R-config-10  No config value reaches a session log
+### R-config-10  No value reaches a session log
 
 THE SYSTEM SHALL write no config value into a session event.
 

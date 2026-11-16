@@ -62,9 +62,18 @@ Why: the transaction is the commit, so no caller is left to close a unit last.
 
 ### R-session-03  Log rows and mutable rows separate
 
-WHEN a block is recorded THE SYSTEM SHALL append it to the `blocks` table and write mutable rows only in the state tables.
+WHEN a block is recorded THE SYSTEM SHALL append it to the `blocks` table and write mutable rows only in
+the `sessions` and `requests` tables.
 Acceptance: @R-session-03
 Why: a copy of log content in a mutable table needs a reconciliation path, and it runs on the crash day.
+
+### R-session-13  The harness queries the store
+
+WHEN the eval harness reads a run THE SYSTEM SHALL answer from store queries over blocks, not a per-tool
+log format.
+the position it holds in the log.
+Acceptance: @R-session-13
+Why: a per-tool log format would be a second record of the run, and it drifts from the log the store keeps.
 
 ### R-session-04  Readers never hold across a commit
 

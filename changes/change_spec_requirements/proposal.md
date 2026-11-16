@@ -23,4 +23,4 @@ Open: two lines keep this change open, each with the tasks line that tracks it.
   appear on. The scenario lands with `add_turn_loop`'s `R-agent-15` scenario, which prints the line; the
   `headless session` gate row stays `M0` until a tape drives it. The clause cannot archive before that tag
   runs, because a clause in `spec/` needs a resolvable acceptance ref (tasks.md:15).
-- spec-review has not ticked this change (tasks.md:16).
+(tasks.md:19)

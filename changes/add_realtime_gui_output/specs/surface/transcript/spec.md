@@ -1,6 +1,6 @@
 # Delta: surface/transcript
 
-## ADDED Requirements Requirements
+## ADDED Requirements
 
 ### R-surface-08  One stream carries every state change
 
