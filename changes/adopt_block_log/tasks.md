@@ -23,8 +23,8 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-08: `Store::fork` copies blocks and the request rows they name, and fork-resume appends without duplicating a copied block
 - [x] R-session-10: the FTS index over `blocks`, with the search scenarios unchanged in result
 - [x] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
-- [x] The mutable-state read in `crates/tau-test/src/steps/session.rs:579` names `sessions` and `turn`; it
-names `sessions` and `requests` after this change, and R-session-03's clause says the two by name
+- [x] The mutable-state read — `MUTABLE` in `crates/tau-test/src/steps/session.rs` — names `sessions`
+it names `sessions` and `requests` after this change, and R-session-03's clause says the two by name
 - [x] R-session-13: the harness read answers from store queries over blocks, and `RunTurn`'s per-turn state
 is dropped
 - [x] R-session-28: the event time lands on the block row
@@ -39,12 +39,31 @@ is dropped
 - [x] R-session-37, R-session-08: a fork re-points a state by the pointer's rank among the copied
   sequences, and drops a pair naming a block the range leaves behind. Scenarios fork over the whole
   range and over part of it; `a_fork_moves_the_pointers_across_a_gap` forks across a gap another
-  session left (mutation: mapping by `seq + (next - from)` answers `left: Some((8, 10)) right:
-  Some((8, 9))` — the pair lands on the child's third copy, not its second)
+  session left (mutation: mapping by `seq + (next - from)` answers `left: (Some("p1"), Some("p3"))
+  right: (Some("p1"), Some("p2"))` — the pointer lands on the child's copy of a block it did not name)
 - [x] R-session-40: `stamp_request` writes the terminal once — the statement carries
   `AND reason IS NULL`, and no row is `Error::Terminal`. A scenario stamps twice and reads the
   first counts back (mutation: dropping the guard answers `a second terminal stamped over the
   first; the reason is Some("refusal"), expected "completed"`)
+- [x] R-session-40: the stamp is scoped to its session, and each usage count rides its own column.
+  `a_stamp_lands_on_the_session_it_names` stamps one session's request 1 and reads the other session's
+  request 1 open (mutation: dropping `session = ?1` answers `session b's request 1 is still open`); a
+  scenario stamps a provider that reported all four and reads them back column by column
+  (mutation: swapping the two cache columns answers `each usage count answers in its own column:
+  the request's cache read count is Some(70), expected 900; the request's cache write count is
+  Some(900), expected 70`)
+- [x] R-session-37: the guard's four arms each have a check of their own, each proved by deleting the
+  arm. The pair's wholeness: the two half-pair scenarios (`the block carrying half a state was
+  written`). Its direction: `the block whose state runs backwards was written`. A pointer naming
+  nothing at its end: `the block whose state ends on no block was written`. A start naming nothing
+  while the end names a row needs a gap in the session's sequences, so
+  `a_state_pointer_whose_start_names_nothing_is_refused` covers it; neutering the start disjunct is
+  caught by that test and nothing else. The `CHECK` fires before the `AFTER INSERT` trigger, so the
+  probe that printed each shape's refusal is what settled which guard answers which pair
+- [x] R-session-36: the request row records its provider, model, counts and reason, and no payload: a
+  scenario reads `pragma_table_info('requests')` and refuses the column's presence
+- [x] lane: a scenario that opens on a `When` clears `world.findings` itself, so a setup scenario
+  cannot fail by quoting the scenario before it
 - [x] R-session-40: `crash_store`'s `blocks` mode commits the blocks and stops before the stamp;
   a scenario kills in that window, and the reopen reads every block with an open request that a
   further block names
@@ -56,9 +75,11 @@ is dropped
   refused on the spot, so its budget is 20 attempts of a 50 ms backoff (~1 s) and the 5 s beat
   leaves ~4 s for the refusal to land. The migration leg is the slow one, ~2.95 s: every attempt
   burns its 100 ms busy timeout before the backoff, so a 3 s beat there leaves ~50 ms
-- [ ] R-session-07: delete the `turn.committed` column, the `events_no_late_insert` trigger and the
-`RunTurn.committed` field, and the scenarios tagged `@R-session-07` in the same archive commit that retires
-the clause — the tag and the ref leave the corpus together, so `spec --check` stays green
+- [ ] R-session-07: the `turn.committed` column, the `events_no_late_insert` trigger and the
+`RunTurn.committed` field are gone with the rewritten migration and lane, and a scenario reads the
+absence (`the log carries no committed marker`). What is left is the scenarios tagged
+`@R-session-07`: they go in the same archive commit that retires the clause, so the tag and the ref
+leave the corpus together and `spec --check` stays green
 - [ ] R-session-30: the late-event scenarios tagged `@R-session-30` go in the same archive commit that retires
 the clause; `blocks` immutability is R-session-31's
 - [x] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged

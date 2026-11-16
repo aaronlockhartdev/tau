@@ -756,6 +756,34 @@ async fn no_committed_marker(world: &mut World) {
     assert_clean(world, "the log carries no committed marker");
 }
 
+#[then("the request row carries no payload column")]
+async fn request_row_carries_no_payload(world: &mut World) {
+    // R-session-36's "no payload": the request row records the call, not its text. Payloads ride
+    // blocks, so a payload column here would be a second copy of the log that nothing keeps in
+    // step. The step before read this row's model, counts and reason, so the absence is measured
+    // on a row that exists.
+    let mut findings: Vec<String> = Vec::new();
+    // The columns are a file fact, and an open store answers them, as the scan step does. This is
+    // not the scenario's last step, so it reports and leaves the close to the step that follows.
+    match raw_conn(world).and_then(|conn| {
+        conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('requests') WHERE name = 'payload'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())
+    }) {
+        Err(e) => findings.push(format!("reading the request row's columns: {e}")),
+        Ok(columns) if columns != 0 => {
+            findings.push("the request row carries a payload column".to_string());
+        }
+        Ok(_) => {}
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+}
+
 #[then("the killed transaction leaves no block")]
 async fn killed_transaction_leaves_nothing(world: &mut World) {
     // R-session-02's fact under a crash: rows written inside a transaction that never
@@ -1062,7 +1090,9 @@ fn race_behind_the_lock(
     // refusals the child reports are. Cutting every beat to 0 turns all three scenarios
     // red — `the second instance met no refusal, so the setup race was never measured`,
     // and on the bounded leg `the second instance did not report a busy store: exit 0;
-    // opened refusals=0`.
+    // opened refusals=0; `. The reported text is the child's exit code, its stdout lines and its
+    // stderr joined by "; ", and the bounded child writes no stderr, so the quote ends in the
+    // separator.
     std::thread::sleep(std::time::Duration::from_millis(beat));
     // The setup is provably unfinished on this side of the lock, while the lock stands.
     if leg == "migrations" {
@@ -1154,6 +1184,9 @@ fn report_setup_open(world: &mut World, child: &SetupChild) {
 
 #[when("a second instance opens the store while its setup is locked")]
 async fn second_instance_opens_under_a_locked_setup(world: &mut World) {
+    // This scenario opens on a When, so it clears the findings itself: a leak from the scenario
+    // before it would be quoted by this one's failure.
+    world.findings.clear();
     // R-session-33, the journal-upgrade leg: the WAL upgrade is refused the moment a lock
     // stands, so the store's bounded retry is what carries the open.
     match setup_race("wal", 300) {
@@ -1167,6 +1200,7 @@ async fn second_instance_opens_under_a_locked_setup(world: &mut World) {
 
 #[when("a second instance opens the store while its migrations are locked")]
 async fn second_instance_opens_under_a_locked_migration(world: &mut World) {
+    world.findings.clear();
     // R-session-33, the migration leg, whose refusal has the other shape: SQLite rolls the
     // deferred migration transaction back, so the statement answers busy only after its 100 ms
     // timeout has spent itself, and one beat of 400 ms covers several attempts.
@@ -1181,6 +1215,7 @@ async fn second_instance_opens_under_a_locked_migration(world: &mut World) {
 
 #[when("the setup lock outlasts the store's retry budget")]
 async fn setup_lock_outlasts_the_budget(world: &mut World) {
+    world.findings.clear();
     // The retry is bounded, so a lock that outlasts it ends the open instead of parking the
     // instance. This is the journal-upgrade leg, where a standing lock is refused on the spot,
     // so the budget is 20 attempts of a 50 ms backoff, ~1 s, and the 5 s beat leaves ~4 s for
@@ -1549,6 +1584,64 @@ async fn commit_a_request_with_no_blocks(world: &mut World) {
     ) {
         report(world, format!("stamping the second request failed: {e}"));
     }
+}
+
+#[when("a request whose provider reported every count is opened and stamped")]
+async fn open_and_stamp_a_request_with_every_count(world: &mut World) {
+    // R-session-40: a provider that reports cache counts, so each count has a column of its own
+    // to land in. The number is the session's third: request numbers are per session.
+    let Some(store) = world.store.as_ref() else {
+        no_store(world);
+        return;
+    };
+    if let Err(e) = store.open_request(SESSION, REQUEST + 2, Some("lane-request-3"), MODEL) {
+        report(world, format!("opening the third request failed: {e}"));
+        return;
+    }
+    if let Err(e) = store.stamp_request(
+        SESSION,
+        REQUEST + 2,
+        Some(USAGE_IN),
+        Some(USAGE_CACHE_READ),
+        Some(USAGE_CACHE_WRITE),
+        Some(USAGE_OUT),
+        REASON,
+    ) {
+        report(world, format!("stamping the third request failed: {e}"));
+    }
+}
+
+#[then("each usage count answers in its own column")]
+async fn each_usage_count_answers_in_its_own_column(world: &mut World) {
+    // R-session-40: four counts, four columns. A stamp that pairs the placeholders wrongly moves
+    // a provider's cache hits into the output count, and a read of one column cannot tell. The
+    // counts here are all distinct, so any pairing shows up as a name and a number.
+    let mut findings: Vec<String> = Vec::new();
+    if let Some(store) = world.store.as_ref() {
+        match store.latest_request(SESSION) {
+            Ok(Some(request)) => {
+                for (name, got, want) in [
+                    ("input", request.usage_in, USAGE_IN),
+                    ("cache read", request.usage_cache_read, USAGE_CACHE_READ),
+                    ("cache write", request.usage_cache_write, USAGE_CACHE_WRITE),
+                    ("output", request.usage_out, USAGE_OUT),
+                ] {
+                    if got != Some(want) {
+                        findings.push(format!(
+                            "the request's {name} count is {got:?}, expected {want}"
+                        ));
+                    }
+                }
+            }
+            Ok(None) => findings.push("no request row is stored".to_string()),
+            Err(e) => findings.push(format!("reading the request: {e}")),
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(world, "each usage count answers in its own column");
 }
 
 #[then("the run answers the session's blocks in sequence")]

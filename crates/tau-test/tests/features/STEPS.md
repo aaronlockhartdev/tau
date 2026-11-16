@@ -42,6 +42,7 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Given a store whose rows were written by a process that is killed
 - Then the committed block is returned in full
 - Then the log carries no committed marker
+- Then the request row carries no payload column
 - Then the killed transaction leaves no block
 - Then the state tables hold no log content
 - Then the store's synchronous is NORMAL
@@ -59,6 +60,8 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Then the index answers a search of the stored blocks
 - When the session is exported
 - When a request that streamed no block is opened and stamped
+- When a request whose provider reported every count is opened and stamped
+- Then each usage count answers in its own column
 - Then the run answers the session's blocks in sequence
 - Then the export holds one line per block and the store answers the same
 - When a block carrying state pointers is committed

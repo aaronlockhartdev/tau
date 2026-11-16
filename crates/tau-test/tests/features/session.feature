@@ -18,6 +18,7 @@ Feature: Session storage
     When a request is opened and a tool call commits its blocks
     Then the blocks are stored in the order they were committed
     And each block carries the time it was given
+    And the request row carries no payload column
     And the request row records its model with no usage and no reason
 
   # One block per commit, and one transaction for the batch a stream closes at once:
@@ -75,7 +76,10 @@ Feature: Session storage
   @R-session-34
   Scenario: A setup lock that outlasts the budget is refused
     # The retry is bounded, so an instance meeting a setup that will not clear is refused
-    # with SQLite's busy error rather than parked.
+    # with a busy store rather than parked. The lock stands on a file not yet in WAL, so the
+    # leg attempted is the journal upgrade, where a standing lock is refused on the spot: the
+    # budget is ~1 s of backoff, well inside the step's 5 s beat. The migration leg, where
+    # each attempt burns a 100 ms busy timeout, is the scenario above.
     When the setup lock outlasts the store's retry budget
     Then the second instance is refused with a busy store
 
@@ -225,6 +229,14 @@ Feature: Session storage
     Then the newest request answers its counts and its reason
     And a count the provider never reported stays null
 
+  # One API reports cache counts and another does not; four counts of distinct size prove each
+  # value lands in the column it names, which no read of one column can show.
+  @R-session-40
+  Scenario: A provider's four counts land in their own columns
+    Given an open store
+    When a request whose provider reported every count is opened and stamped
+    Then each usage count answers in its own column
+
   # A context rebuilt from the log needs the slot, and the loop's order is not a record.
   @R-session-45
   Scenario: An injection block records the slot it fills
@@ -309,7 +321,10 @@ Feature: Session storage
     Then the store refuses the write
 
   # A pair is stored whole, in order, and naming blocks the session has already written: the
-  # state a read can rebuild. Each arm of the guard is a scenario of its own.
+  # state a read can rebuild. Four arms, four checks: the pair's wholeness (the two half-pair
+  # scenarios), its direction (the scenario above), a pointer naming nothing at its end (the
+  # scenario below), and a start naming nothing while the end names a row, which needs a gap in
+  # the session's sequences and so lives in tau-core's `a_state_pointer_whose_start_names_nothing_is_refused`.
   @R-session-37
   Scenario: A block whose state ends on no block is refused
     Given an open store

@@ -631,7 +631,13 @@ impl Store {
         // its rank among them, not by an offset: `next_seq + rank` names the child's copy of
         // the block the pointer named. A pair is kept only when both pointers fall inside the
         // copied range, because a pointer naming an uncopied block would name the parent's row
-        // from the child (R-session-37).
+        // from the child (R-session-37). Two shapes worth naming. The range test on `state_end`
+        // is implied, not tested: a copied row's pointers name blocks at or before its own
+        // sequence, so a start inside the range puts its end inside too, and no fork can carry
+        // a pair that straddles the range's end. `ORDER BY seq` is load-bearing, not
+        // decoration: the copies take their child sequences in insert order, and the rank is
+        // only the mapping when that order is the parent's. The payload check in the gap test
+        // is the read that lands on the copy of a different block if the order goes.
         tx.execute(
             "INSERT INTO blocks (session, request, ts, kind, payload, slot, state_start, state_end) \
              SELECT ?1, request, ts, kind, payload, slot, \
@@ -999,6 +1005,57 @@ mod tests {
         let other = store.latest_request("b").unwrap().unwrap();
         assert_eq!(other.reason, None, "session b's request 1 is still open");
         assert_eq!(other.usage_in, None, "a count of a's stamp landed on b");
+        drop(store);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R-session-37's start arm, alone. The pair is whole, runs forwards, and its end names a row
+    /// the session owns, so the `CHECK` passes and the trigger's end disjunct is satisfied: only
+    /// the start disjunct can refuse it. Neuter that disjunct and the block stores, which is the
+    /// mutation this test is the check for. The gap comes from a sibling session taking the
+    /// sequence between.
+    #[test]
+    fn a_state_pointer_whose_start_names_nothing_is_refused() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        let dir =
+            std::env::temp_dir().join(format!("tau-state-arm-{}-{stamp}", std::process::id()));
+        let mut store = Store::open(dir.join("state.db")).unwrap();
+        store.open_session("p").unwrap();
+        store.open_session("x").unwrap();
+        store
+            .commit(&block("p", None, "user_input", "p1", 11))
+            .unwrap();
+        store
+            .commit(&block("x", None, "user_input", "x1", 12))
+            .unwrap();
+        store
+            .commit(&block("p", None, "user_input", "p2", 13))
+            .unwrap();
+        // p owns sequences 1 and 3; the pair (2, 3) names p's row 3 and nothing at 2.
+        let err = store
+            .commit(&Block {
+                session: "p",
+                request: None,
+                ts: 14,
+                kind: "user_input",
+                payload: "p3",
+                slot: None,
+                state_start: Some(2),
+                state_end: Some(3),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("a state pointer names no block of the session"),
+            "the start arm answered: {err}"
+        );
+        assert_eq!(
+            store.run("p").unwrap().len(),
+            2,
+            "the refused block stored nothing"
+        );
         drop(store);
         fs::remove_dir_all(&dir).ok();
     }
