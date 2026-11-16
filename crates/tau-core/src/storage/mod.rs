@@ -1105,4 +1105,77 @@ mod tests {
         drop(store);
         fs::remove_dir_all(&dir).ok();
     }
+
+    /// R-session-37's scoping at the other end of the pair. The start names a row of the carrying
+    /// session, so only the end's session qualifier stands between this block and a pointer into a
+    /// sibling's log. Drop `b.session = NEW.session` from the end disjunct and the block stores.
+    #[test]
+    fn a_state_pointer_whose_end_names_another_session_is_refused() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        let dir = std::env::temp_dir().join(format!(
+            "tau-state-scope-end-{}-{stamp}",
+            std::process::id()
+        ));
+        let mut store = Store::open(dir.join("state.db")).unwrap();
+        store.open_session("p").unwrap();
+        store.open_session("x").unwrap();
+        store
+            .commit(&block("p", None, "user_input", "p1", 11))
+            .unwrap();
+        store
+            .commit(&block("x", None, "user_input", "x1", 12))
+            .unwrap();
+        // Sequence 1 is p's, sequence 2 is x's. For p the pair is half in place.
+        let err = store
+            .commit(&Block {
+                session: "p",
+                request: None,
+                ts: 13,
+                kind: "user_input",
+                payload: "p2",
+                slot: None,
+                state_start: Some(1),
+                state_end: Some(2),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("a state pointer names no block of the session"),
+            "the end's session scoping answered: {err}"
+        );
+        assert_eq!(
+            store.run("p").unwrap().len(),
+            1,
+            "the refused block stored nothing"
+        );
+        drop(store);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// R-session-36's "one `requests` row per provider round-trip" is the table's key. A store that
+    /// accepted a second row for one `(session, request)` would answer a round-trip twice, and the
+    /// newest read would hide the duplicate.
+    #[test]
+    fn a_request_row_is_opened_once() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        let dir =
+            std::env::temp_dir().join(format!("tau-request-once-{}-{stamp}", std::process::id()));
+        let store = Store::open(dir.join("state.db")).unwrap();
+        store.open_session("p").unwrap();
+        store.open_request("p", 1, None, "lane-model").unwrap();
+        let err = store.open_request("p", 1, None, "lane-model").unwrap_err();
+        assert!(
+            format!("{err}").contains("UNIQUE constraint failed"),
+            "the request key answered: {err}"
+        );
+        let request = store.latest_request("p").unwrap().unwrap();
+        assert_eq!(request.request, 1, "the row answers its round-trip");
+        drop(store);
+        fs::remove_dir_all(&dir).ok();
+    }
 }

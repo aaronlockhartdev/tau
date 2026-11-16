@@ -24,10 +24,11 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-10: the FTS index over `blocks`, with the search scenarios unchanged in result
 - [x] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
 - [x] The mutable-state read — `MUTABLE` in `crates/tau-test/src/steps/session.rs` — names `sessions`
-  and `requests`, the tables a store setup migrates, so the setup-race scenarios watch both
+  and `requests`, the tables a store setup migrates; the R-session-03 scan is the step that reads
+  both names, while the setup-race steps watch the journal mode and the `blocks` table
 - [x] R-session-13: the store side answers a run from queries over blocks, proved by the lane's
-  harness-read step over `run` and `latest_request`; the `eval` bin and its suite file are the
-  `manual` row of `AGENTS.md`, so the harness has no run gate that proves it end to end
+  harness-read step over `run` and `latest_request`. The `eval` lane is `AGENTS.md`'s `manual` row,
+  and no `eval` bin or suite file is in the tree, so nothing proves the harness end to end
 - [x] R-session-28: the event time lands on the block row
 - [x] R-session-31: the update and delete triggers name `blocks`
 - [x] R-session-32: the composite FK to `requests`, and the orphan-row refusal
@@ -46,8 +47,8 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-40: `stamp_request` writes the terminal once — the statement carries
   `AND reason IS NULL`, and no row is `Error::Terminal`. A scenario stamps twice and reads the
   first counts back (mutation: dropping the guard answers `the first terminal answers its counts
-  and its reason: a second terminal stamped over the first; the reason is Some("refusal"),
-  expected "completed"`)
+  and its reason: a second terminal stamped over the first; the reason is Some("refusal"), expected
+  "completed"; the input count is Some(1), expected 120`)
 - [x] R-session-40: the stamp is scoped to its session, and each usage count rides its own column.
   `a_stamp_lands_on_the_session_it_names` stamps one session's request 1 and reads the other session's
   request 1 open (mutation: dropping `session = ?1` answers `session b's request 1 is still open`); a
@@ -66,8 +67,16 @@ this one, so the session range is split until that change archives — the gap c
   `a_state_pointer_into_another_session_is_refused` covers it; dropping the trigger's
   `b.session = NEW.session` is caught by that test and the start-arm test, and by nothing in the
   lane. The `CHECK` fires before the `AFTER INSERT` trigger — measured, not read from
-  documentation — so a half pair, a backwards pair and an end naming nothing land on the `CHECK`,
-  and a start naming nothing with a whole end lands on the trigger
+  documentation — so a half pair and a pair that runs backwards land on the `CHECK`, and a pair
+  naming nothing lands on the trigger: at its start, at its end, or across a session's border
+- [x] R-session-37: the pair's session border is checked at both ends.
+  `a_state_pointer_into_another_session_is_refused` names a sibling's row at the start, and
+  `a_state_pointer_whose_end_names_another_session_is_refused` names one at the end while the start
+  names a row of the carrying session (mutation: dropping `b.session = NEW.session` from the end
+  disjunct turns that test red and leaves every scenario green, so the test is the check's only teeth)
+- [x] R-session-36: `a_request_row_is_opened_once` opens one round-trip twice and refuses the second
+  row, which is the table's key standing where R-session-36 promises one row per round-trip
+  (mutation: dropping `PRIMARY KEY (session, request)` answers the second open with an `Ok` value)
 - [x] R-session-36: the request row records its provider, model, counts and reason, and no payload: a
   scenario reads `pragma_table_info('requests')` and refuses the column's presence
 - [x] lane: a scenario that opens on a `When` clears `world.findings` itself, so a setup scenario
@@ -100,9 +109,10 @@ the clause; `blocks` immutability is R-session-31's
 - [x] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [x] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
 - [x] docs: `docs/glossary.md` adds `block`, `request`, `injection`, `slot`, `user input`, `usage`,
-  `terminal` and `state`; drops `turn` and `committed marker`; re-words `log`, `run`, `session`,
-  `steer`, `event time` and `session start output`. The live cells named `events`, turns and the
-  committed marker, the unit this change retires
+  `terminal`, `state`, `context` and `JSONL`; drops `turn` and `committed marker`; re-words `fork`,
+  `log`, `run`, `session`, `steer`, `event time` and `session start output`. The live cells named
+  `events`, turns and the committed marker — the unit this change retires — and `fork` named a
+  prompt cache, which is the subagent change's unit
 - [x] docs: `docs/stack.md` Storage row names `blocks` and `requests`, the state as a pair of
   pointers into the log, and the ranges the storage leaf covers: R-session-01..06, 08, 10, 11, 13,
   18, 28..46, with 07 and 30 retiring at this change's archive and 41..44 landing from

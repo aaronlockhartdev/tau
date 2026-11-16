@@ -1090,8 +1090,8 @@ fn race_behind_the_lock(
     // refusals the child reports are. Cutting every beat to 0 turns all three scenarios
     // red — `the second instance met no refusal, so the setup race was never measured`,
     // and on the bounded leg `the second instance did not report a busy store: exit 0;
-    // opened refusals=0; `. The reported text is the child's exit code, its stdout lines and its
-    // stderr joined by "; ", and the bounded child writes no stderr, so the quote ends in the
+    // opening opened refusals=0; `. The reported text is the child's exit code, its stdout lines
+    // and its stderr joined by "; ", and the bounded child writes no stderr, so the quote ends in the
     // separator.
     std::thread::sleep(std::time::Duration::from_millis(beat));
     // The setup is provably unfinished on this side of the lock, while the lock stands.
@@ -1682,7 +1682,7 @@ async fn each_usage_count_answers_in_its_own_column(world: &mut World) {
 #[then("the run answers the session's blocks in sequence")]
 async fn run_answers_from_the_store(world: &mut World) {
     // R-session-13: a run is a query over the log, in the store's sequence, carrying the
-    // block's own fields and no per-turn state. A request that streamed no block adds no
+    // block's own fields and no state of its own. A request that streamed no block adds no
     // block to the answer: it is a row of `requests`, not a unit the read invents.
     let mut findings = Vec::new();
     if let Some(store) = world.store.as_ref() {

@@ -171,8 +171,8 @@ Feature: Session storage
     And the log checkpoints with no reader in the way
 
   # The eval harness reads a run as a store query over blocks, in the store's sequence,
-  # with no per-turn state and no per-tool log format. A request that streamed no block
-  # is a row of `requests`, not a turn invented for it.
+  # with no state of its own and no per-tool log format. A request that streamed no block
+  # is a row of `requests`, not a unit the read invents.
   @R-session-13
   Scenario: A run is answered from store queries over blocks
     Given an open store
