@@ -3,7 +3,7 @@
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
 `gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
-`lane`: a runner with a fixed scope; its name is a gate row's name.
+`lane`: a runner with a fixed scope; the gate report names it by its row.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
@@ -17,7 +17,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `observation`: a condensation of a session's oldest messages, filling a context slot.
 `reflection`: a condensation of observations.
 `tape`: a recorded model transcript that answers calls in place of a provider.
-`layer`: one of two levels a config, context, or skill file sits at, global and project.
+`layer`: one of two levels, global and project; deeper guides and extra dirs count as project.
 `tail`: the newest messages of a session, kept verbatim.
 `project`: the directory a session works in, named by its root.
 `gate state`: the column saying who runs a row: `run` today, `manual` by an agent, `M0` never.

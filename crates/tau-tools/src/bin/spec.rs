@@ -116,7 +116,7 @@ fn clauses_in(path: &str, text: &str) -> Vec<Clause> {
         if fenced[idx] {
             continue;
         }
-        let Some(head) = line.trim_start().strip_prefix("### ") else {
+        let Some(head) = clause_head(line) else {
             continue;
         };
         let id = head.split_whitespace().next().unwrap_or("");
@@ -125,8 +125,7 @@ fn clauses_in(path: &str, text: &str) -> Vec<Clause> {
         }
         let mut end = idx + 1;
         while end < lines.len()
-            && !((lines[end].starts_with('#') || lines[end].trim_start().starts_with("### "))
-                && !fenced[end])
+            && !((lines[end].starts_with('#') || is_clause_head(lines[end])) && !fenced[end])
         {
             end += 1;
         }
@@ -151,6 +150,24 @@ fn clauses_in(path: &str, text: &str) -> Vec<Clause> {
         });
     }
     out
+}
+
+/// The text after a clause heading's hashes. CommonMark's ATX heading allows a
+/// space or a tab after `###`, so a tab form is a clause and both scans must see
+/// it; a clause one scan misses escapes the ID, duplicate, cap, acceptance and
+/// coverage checks, and hands its number back to `spec -- id`.
+fn clause_head(line: &str) -> Option<&str> {
+    let rest = line.trim_start().strip_prefix("###")?;
+    if rest.starts_with(' ') || rest.starts_with('\t') {
+        Some(rest.trim_start())
+    } else {
+        None
+    }
+}
+
+/// True when the line opens a clause, at any indent and after any tab.
+fn is_clause_head(line: &str) -> bool {
+    clause_head(line).is_some()
 }
 
 /// The heading shape rules, read off the clause's own first line: `spec-authoring`
@@ -449,10 +466,12 @@ fn check_cmd() -> i32 {
                 .get(domain)
                 .is_some_and(|nums| nums.contains(&n))
         });
+        // The heading shape binds a withdrawal too: its heading is scanned, so a
+        // malformed one is reported even when its acceptance ref is waived.
+        for msg in heading_problems(false, clause) {
+            problems += report(&msg);
+        }
         if !is_withdrawn {
-            for msg in heading_problems(false, clause) {
-                problems += report(&msg);
-            }
             problems += check_acceptance(
                 clause,
                 &gates,
@@ -951,6 +970,16 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)]) -> Vec<String> {
     for (target, clauses) in plan {
         let text = fs::read_to_string(target).unwrap_or_default();
         for clause in clauses {
+            // ADDED and MODIFIED headings land in the live corpus, where the lint counts
+            // them, so archiving an over-cap heading would turn `spec lint` red: refuse.
+            if clause.section.contains("ADDED") || clause.section.contains("MODIFIED") {
+                for msg in heading_problems(true, clause) {
+                    refusals.push(format!(
+                        "{}: clause {} heading: {msg}",
+                        clause.path, clause.id
+                    ));
+                }
+            }
             if !MARKERS.iter().any(|m| clause.section.contains(m)) {
                 refusals.push(format!(
                     "{}: clause {} sits under no ADDED/MODIFIED/REMOVED marker",
@@ -1086,20 +1115,12 @@ fn clause_range(text: &str, id: &str) -> Option<Range<usize>> {
     let mut start = 0;
     for (idx, line) in lines.iter().enumerate() {
         if !fenced[idx]
-            && line.trim_start().starts_with("### ")
-            && line
-                .trim_start()
-                .trim_start_matches('#')
-                .split_whitespace()
-                .next()
-                == Some(id)
+            && clause_head(line).and_then(|head| head.split_whitespace().next()) == Some(id)
         {
             let mut end = text.len();
             let mut offset = start + line.len();
             for (j, next) in lines[idx + 1..].iter().enumerate() {
-                if !fenced[idx + 1 + j]
-                    && (next.starts_with('#') || next.trim_start().starts_with("### "))
-                {
+                if !fenced[idx + 1 + j] && (next.starts_with('#') || is_clause_head(next)) {
                     end = offset;
                     break;
                 }
@@ -1356,6 +1377,23 @@ mod tests {
     }
 
     #[test]
+    fn archive_refuses_a_heading_the_live_lint_would_redden() {
+        // A heading over the cap that lands in `spec/` turns `spec lint` red in the
+        // archive commit, so the archive refuses before it writes anything.
+        let plan = [(
+            PathBuf::from("spec/session/never-exists/spec.md"),
+            vec![clause(
+                "R-session-02",
+                "## ADDED Requirements",
+                "### R-session-02  A heading with eight words in its name here\nTHE SYSTEM SHALL x.",
+            )],
+        )];
+        let refusals = validate_plan(&plan);
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(refusals[0].contains("the cap is 6"), "{refusals:?}");
+    }
+
+    #[test]
     fn a_withdrawn_clause_needs_nothing_in_spec_at_archive() {
         let plan = [(
             PathBuf::from("spec/session/never-exists/spec.md"),
@@ -1364,7 +1402,7 @@ mod tests {
                 clause(
                     "R-session-03",
                     "## MODIFIED Requirements",
-                    "WHEN x THE SYSTEM SHALL y.",
+                    "### R-session-03  A name\nWHEN x THE SYSTEM SHALL y.",
                 ),
                 clause(
                     "R-session-04",
@@ -1476,7 +1514,7 @@ mod proptests {
 
     // The shapes a spec file holds: section headings, clause headings, fences,
     // prose, and indented prose that must not read as a heading.
-    const SHAPES: [&str; 10] = [
+    const SHAPES: [&str; 11] = [
         "## Requirements",
         "## Notes",
         "### R-a-01  one",
@@ -1486,6 +1524,7 @@ mod proptests {
         "```",
         "# index",
         "    ### R-a-03  indented",
+        "###\tR-a-04  tabbed",
         "THE SYSTEM SHALL list members.",
     ];
 

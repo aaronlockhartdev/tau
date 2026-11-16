@@ -18,10 +18,10 @@
 is `add_turn_loop`'s `R-agent-15`, tagged `@R-workspace-08`
 - [ ] docs: the delta-format sweep `adopt_block_log` carried here — bare `## ADDED` markers to
 `## ADDED Requirements`, headings over the six-word cap, `THE SYSTEM SHALL NOT` obligations outside
-the five EARS forms, the `Apply to` line naming each delta's live leaf, and the `IDs:` line ten of the
-twelve open changes lack (`add_subagent_support`,
+the five EARS forms, the `Apply to` line naming each delta's live leaf, and the `IDs:` line — ten of the
+twelve open changes state no clause IDs; `add_turn_loop` lists its claims under `IDs:` and `add_realtime_gui_output` opens with an `IDs:` task. The six deltas the sweep re-formats are `add_subagent_support`,
 `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`, `adopt_hash_anchor_editing`,
-`adopt_skills_convention`)
+`adopt_skills_convention`
 - [ ] docs: the clause-layout sweep `adopt_block_log` carried here — obligation, `Acceptance:` and
 `Why:` adjacent, no blank line between them; the count and the per-change split are in
 `changes/archive/2026-11-16-adopt_block_log/tasks.md`
