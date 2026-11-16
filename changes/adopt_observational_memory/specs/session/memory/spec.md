@@ -36,8 +36,8 @@ Why: an observer blind to the project's rules summarises against them.
 
 ### R-session-24  Memory keeps the prompt prefix stable
 
-WHEN an observation enters the context THE SYSTEM SHALL append it at the end of the prompt prefix and leave
-the earlier prefix byte-identical.
+WHEN an observation enters the context THE SYSTEM SHALL record it as a block in the `observations` slot and
+leave the earlier prefix byte-identical.
 Acceptance: @R-session-24
 Why: a summary inserted into the prefix invalidates every cache entry behind it.
 

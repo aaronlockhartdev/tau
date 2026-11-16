@@ -24,13 +24,13 @@ Acceptance: gate unit + surface
 
 WHEN a commit is prepared THE SYSTEM SHALL run every automated gate in `AGENTS.md`, and report a manual gate as skipped.
 
-Acceptance: spec-review check 15
+Acceptance: gate ci lane
 
 ### R-harness-08  Every lane stays in the commit
 
 WHEN a lane stops fitting the time a commit takes THE SYSTEM SHALL keep running it on every commit, and SHALL NOT add a nightly job or a skip.
 
-Acceptance: spec-review check 15
+Acceptance: gate ci lane
 Why: a suite an agent skips is not a gate, and a nightly job is a skip with a timer.
 
 ### R-harness-09  CI builds the app crate

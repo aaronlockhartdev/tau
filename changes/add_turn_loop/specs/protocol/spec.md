@@ -19,7 +19,8 @@ Why: a schema no type builds is a claim about the tool, and a provider rejects t
 
 ### R-protocol-03  One vocabulary names the stream
 
-THE SYSTEM SHALL generate the block kind set, the request reason set, and the context slot name set into
+THE SYSTEM SHALL generate the block kind set, the request reason set, and the context slot name set —
+including the `observations` and `reflections` slots — into
 `contracts/`.
 Acceptance: @R-protocol-03
 Why: clauses across several domains name a kind or a reason, and a hand-written list drifts from the type that checks it.

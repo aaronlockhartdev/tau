@@ -6,9 +6,9 @@ A tau session must run for days without compaction. Rolling summaries destroy ea
 
 ## Options
 
-- Mirror Mastra OM: `@mastra/memory` ≥1.1.0 docs, Observational Memory section, and `packages/memory` source
-(read 2026-11-13); the docs state 5–40x compression and cache-first ordering. Cost: one session leaf spec; an
-observation and a reflection are blocks in the log, so no table lands.
+- Mirror Mastra OM: <https://mastra.ai/reference/memory/observational-memory> and the `packages/memory`
+source (read 2026-11-13); the docs state 5–40x compression and cache-first ordering. Cost: one session
+leaf spec; an observation and a reflection are blocks in the log, so no table lands.
 - Rolling summary: no external evidence in its favour; it discards earlier decisions, regrows context rot, and invalidates the prompt cache.
 
 ## Decision
@@ -28,7 +28,7 @@ append-only (R-session-31), so a condensation replaces nothing — an observatio
 supersedes, and the next context is built from the observations and the kept tail. `adopt_block_log` lands
 that unit, and archives before this change. The count reaches a frontend on core's event stream, the shape
 `add_realtime_gui_output` owns (R-surface-08). Token budgets move from prompt text into storage.
-Eval: none needed — the thresholds are lane-testable. The clauses are in
+The clauses are in
 `changes/adopt_observational_memory/specs/session/memory/spec.md` as `R-session-19..27`, archived to
 `spec/session/memory/spec.md`.
 

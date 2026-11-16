@@ -37,7 +37,8 @@ Why: the whole-session read materialises every payload, and resume runs on every
 
 ### R-session-40  Usage arrives at the terminal
 
-WHEN a request reaches a terminal event THE SYSTEM SHALL stamp its usage and reason, leaving an unknown count null.
+WHEN a request reaches a terminal event THE SYSTEM SHALL stamp its usage and reason after the last block
+that request produced, leaving an unknown count null.
 Acceptance: @R-session-40
 Why: one API reports input tokens at the open and another only at the close, so a null is a fact.
 
