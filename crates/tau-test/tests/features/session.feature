@@ -1,7 +1,7 @@
 Feature: Session storage
 
-  # Each scenario ends on the step that reads the store and closes it, so steps that
-  # read the store come last.
+  # Each scenario that opens a store ends on the step that reads the store and closes it, so
+  # the steps that read the store come last.
 
   @R-session-01
   Scenario: A session's store holds one write connection
@@ -320,8 +320,8 @@ Feature: Session storage
     When a block whose state names no block is inserted
     Then the store refuses the write
 
-  # A pair is stored whole, in order, and naming blocks the session has already written: the
-  # state a read can rebuild. Four arms, four checks: the pair's wholeness (the two half-pair
+  # A pair is stored whole, in order, and naming blocks of the session, at that row's own sequence:
+  # state a read can rebuild. Four arms, five checks: the pair's wholeness (the two half-pair
   # scenarios), its direction (the scenario above), a pointer naming nothing at its end (the
   # scenario below), and a start naming nothing while the end names a row, which needs a gap in
   # the session's sequences and so lives in tau-core's `a_state_pointer_whose_start_names_nothing_is_refused`.

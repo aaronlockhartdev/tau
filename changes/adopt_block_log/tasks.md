@@ -15,8 +15,9 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-45: the slot on the block row, and an injection block that fills one
 - [x] R-session-46: the slot read, answering a session's blocks by the slot they record
 - [x] R-session-40: the terminal stamp, and a request row with a reason and no block
-- [x] R-session-02: the block transaction — every block row of a commit, all of it or none — proved by
-  the crash child
+- [x] R-session-02: a block and its state pointers commit in one transaction — the refused batch
+  stores none of it (`a_refused_write_at_the_end_of_a_commit_stores_nothing` and its scenario), and
+  the crash child proves a killed transaction leaves no row
 - [x] R-session-03: the scan's mutable set becomes `sessions` and `requests` in `crates/tau-test/src/steps/session.rs`
 - [x] R-session-04: the in-flight window scenario at block scale, with the checkpoint probe kept after the writer closes
 - [x] R-session-05: `synchronous = NORMAL` stated for a committed block, not a committed turn (@R-session-05)
@@ -36,9 +37,9 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-32, 37: the keys bind every row a commit writes — `blocks.session` references
   `sessions`, a state is stored as a pair and in order (`CHECK`), and a trigger refuses a pointer
   naming no block of the session. Scenarios refuse a block for an unrecorded session (mutation:
-  dropping the reference answers `block naming an unrecorded session was written`), half a
+  dropping the reference answers `the block naming an unrecorded session was written`), half a
   state, a pair that runs backwards, and a pair naming nothing (mutation: `RAISE(IGNORE)` answers
-  `block whose state names no block was written`)
+  `the block whose state names no block was written`)
 - [x] R-session-37, R-session-08: a fork re-points a state by the pointer's rank among the copied
   sequences, and drops a pair naming a block the range leaves behind. Scenarios fork over the whole
   range and over part of it; `a_fork_moves_the_pointers_across_a_gap` forks across a gap another
@@ -58,24 +59,29 @@ this one, so the session range is split until that change archives — the gap c
   the request's cache read count is Some(70), expected 900; the request's cache write count is
   Some(900), expected 70`)
 - [x] R-session-37: the guard's four arms each have a check of their own, each proved by deleting the
-  arm. The pair's wholeness: `block carrying half a state was written` for a start with no end,
-  and `block whose state has an end and no beginning was written` for the half the other way.
-  Its direction: `block whose state runs backwards was written`. A pointer naming
-  nothing at its end: `block whose state ends on no block was written`. A start naming nothing
+  arm. The pair's wholeness: `the block whose state has an end and no beginning was written` is the
+  half that stores once the conjunct is gone, and `the block carrying half a state was written`
+  becomes `the block carrying half a state failed as a state pointer names no block of the session,
+  expected CHECK constraint failed` — the trigger's message, not the `CHECK`'s.
+  Its direction: `the block whose state runs backwards was written`. A pointer naming
+  nothing at its end: `the block whose state ends on no block was written`. A start naming nothing
   while the end names a row needs a gap in the session's sequences, so
   `a_state_pointer_whose_start_names_nothing_is_refused` covers it; neutering the start disjunct is
   caught by that test and nothing else. A pointer into a sibling session's sequence needs two
   sessions and a sequence only one of them owns, so
   `a_state_pointer_into_another_session_is_refused` covers it; dropping the trigger's
-  `b.session = NEW.session` is caught by that test and the start-arm test, and by nothing in the
-  lane. The `CHECK` fires before the `AFTER INSERT` trigger — measured, not read from
+  `b.session = NEW.session` from both disjuncts turns three tests red — this one, the start-arm
+  test, and the end-border test below — and leaves every scenario green. The `CHECK` fires before
   documentation — so a half pair and a pair that runs backwards land on the `CHECK`, and a pair
   naming nothing lands on the trigger: at its start, at its end, or across a session's border
-- [x] R-session-37: the pair's session border is checked at both ends.
-  `a_state_pointer_into_another_session_is_refused` names a sibling's row at the start, and
+- [x] R-session-37: the pair's session border has a check at each end, alone.
+  `a_state_pointer_into_another_session_is_refused` names a sibling's row at both ends,
+  `a_state_pointer_whose_start_names_another_session_is_refused` names one at the start while the
+  end names a row of the carrying session, and
   `a_state_pointer_whose_end_names_another_session_is_refused` names one at the end while the start
-  names a row of the carrying session (mutation: dropping `b.session = NEW.session` from the end
-  disjunct turns that test red and leaves every scenario green, so the test is the check's only teeth)
+  names one (mutations: dropping `b.session = NEW.session` from the end disjunct turns only the
+  end-border test red; from the start disjunct, the start-border test and the start-arm test; the
+  lane stays green under both)
 - [x] R-session-36: `a_request_row_is_opened_once` opens one round-trip twice and refuses the second
   row, which is the table's key standing where R-session-36 promises one row per round-trip
   (mutation: dropping `PRIMARY KEY (session, request)` answers the second open with an `Ok` value)

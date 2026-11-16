@@ -123,8 +123,9 @@ pub struct Block<'a> {
     pub slot: Option<&'a str>,
     /// The state this block leaves, as the first and last sequences of the context it was built
     /// from. Each names a block of the carrying session, at that row's own sequence at the latest:
-    /// the guard runs after the row lands, so a pointer to a later sequence is refused, as is half
-    /// a pair and a pointer into another session's log (R-session-37).
+    /// the guard sees the row once it lands, so a pointer to a later sequence is refused, as is a
+    /// pointer into another session's log; half a pair is refused first, by the table's `CHECK`
+    /// (R-session-37).
     pub state_start: Option<i64>,
     pub state_end: Option<i64>,
 }
@@ -1145,6 +1146,55 @@ mod tests {
         assert!(
             format!("{err}").contains("a state pointer names no block of the session"),
             "the end's session scoping answered: {err}"
+        );
+        assert_eq!(
+            store.run("p").unwrap().len(),
+            1,
+            "the refused block stored nothing"
+        );
+        drop(store);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The twin at the pair's other end. The end names a row of the carrying session, so only the
+    /// start's session qualifier stands between this block and a pointer into a sibling's log:
+    /// sequence 1 is x's, sequence 2 is p's. Drop `b.session = NEW.session` from the start disjunct
+    /// and the block stores, carrying a start no read of p can answer.
+    #[test]
+    fn a_state_pointer_whose_start_names_another_session_is_refused() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        let dir = std::env::temp_dir().join(format!(
+            "tau-state-scope-start-{}-{stamp}",
+            std::process::id()
+        ));
+        let mut store = Store::open(dir.join("state.db")).unwrap();
+        store.open_session("p").unwrap();
+        store.open_session("x").unwrap();
+        // x writes first, so sequence 1 is x's and sequence 2 is p's.
+        store
+            .commit(&block("x", None, "user_input", "x1", 11))
+            .unwrap();
+        store
+            .commit(&block("p", None, "user_input", "p1", 12))
+            .unwrap();
+        let err = store
+            .commit(&Block {
+                session: "p",
+                request: None,
+                ts: 13,
+                kind: "user_input",
+                payload: "p2",
+                slot: None,
+                state_start: Some(1),
+                state_end: Some(2),
+            })
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("a state pointer names no block of the session"),
+            "the start's session scoping answered: {err}"
         );
         assert_eq!(
             store.run("p").unwrap().len(),
