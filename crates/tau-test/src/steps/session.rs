@@ -704,7 +704,8 @@ async fn committed_block_survives(world: &mut World) {
 
 #[then("the log carries no committed marker")]
 async fn no_committed_marker(world: &mut World) {
-    // R-session-07 as an absence: a block is committed by the transaction that inserts
+    // The absence R-session-07 asked for, retired at `adopt_block_log`'s archive and read
+    // here under `@R-session-06`: a block is committed by the transaction that inserts
     // it, so the log has no marker column to read and no unit to close. The step is not
     // vacuous because the step before it read the block this absence is measured on.
     let mut findings: Vec<String> = Vec::new();

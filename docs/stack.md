@@ -9,10 +9,10 @@ Decided, with pins; a deviation needs a change. A pin is a fact, so it lives her
 | UI | `gpui-kit`: `gpui-component` styled layer over `gpui-base`, in `crates/tau-app` only | gpui-kit 0.9 · MSRV Rust 1.92 |
 | Async | runtime rule: R-workspace-14, R-workspace-15 | tokio 1 (`macros`, `rt-multi-thread`), a `crates/tau-test` dev-dependency |
 | Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
-| Unit + surface tests | `cargo nextest` (`-P ci` in CI: `.config/nextest.toml`), `proptest`, `#[gpui::test]` | nextest 0.9.152 · proptest 1.12 |
+| Unit + surface tests | `cargo nextest` (`-P ci` in CI: `.config/nextest.toml`), `proptest` | nextest 0.9.152 · proptest 1.12 · `#[gpui::test]` lands with the surface, unpinned |
 | Advisory gates | `cargo-deny` reads RustSec; Dependabot reads GitHub's reviewed advisories; the two drifted apart in 2026, so both run | cargo-deny 0.20.2 |
 | CI | GitHub Actions lane: `.github/workflows/gates.yml` runs `tau-tools --bin gates` | actions pinned by commit SHA |
 | Doc gates | `rumdl`, `lychee` | 0.3.4 · 0.24.2 |
-| Markdown / diff | core parses with `pulldown-cmark`; the app renders it | spike in M0 |
-| Config | TOML + hot reload (`add_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
-| Storage | SQLite via `rusqlite` (`bundled`, WAL): the append-only `blocks` log, one row per block, and `requests`, one row per round-trip with its usage and its terminal; a block's state is a pair of pointers into the log; FTS5 index over the log, JSONL by export (R-session-01..06, 08, 10, 11, 13, 18, 28..46 in `spec/session/storage/spec.md`: 07 and 30 retired at `adopt_block_log`'s archive, 41..44 land from `add_turn_loop`); WAL needs a filesystem with working POSIX locks and shared memory, so a network mount is not a store host | rusqlite 0.41 (bundled SQLite 3.54.1) · migrations 2.7 · serde_json 1.0 |
+| Markdown / diff | core is to parse with `pulldown-cmark`; the app renders it | unpinned; spike in M0 |
+| Config | TOML + hot reload (`add_user_config`) | unpinned until that change lands; `toml_edit` is transitive at 0.25.19 today, `notify` absent |
+| Storage | SQLite via `rusqlite` (`bundled`, WAL): the append-only `blocks` log, one row per block, and `requests`, one row per round-trip with its usage and its terminal; a block's state is a pair of pointers into the log; FTS5 index over the log, JSONL by export (R-session-01..06, 08, 10, 11, 13, 18, 28..46 in `spec/session/storage/spec.md`: 07 and 30 retired at `adopt_block_log`'s archive, 41..44 land from `add_turn_loop`); WAL needs a filesystem with working POSIX locks and shared memory, so a network mount is not a store host | rusqlite 0.41 (its `libsqlite3-sys` vendors SQLite 3.54.1) · migrations 2.7 · serde_json 1.0 |

@@ -26,10 +26,10 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | contracts current | `cargo run -p tau-protocol --bin contracts -- --check` | run |
 | doc lint | `rumdl check spec changes docs AGENTS.md README.md` | run |
 | links | `lychee spec changes docs AGENTS.md README.md` | run |
-| unit + surface | `grep -q 'fail-fast = false' .config/nextest.toml && cargo nextest run -P ci` | run |
+| unit + surface | `grep -q '^fail-fast = false' .config/nextest.toml && cargo nextest run -P ci` | run |
 | behaviour | `cargo test -p tau-test --test features` | run |
 | steps current | `cargo run -p tau-test --bin steps -- --check` | run |
-| dependencies current | `cargo deny check && grep -q 'package-ecosystem: cargo' .github/dependabot.yml && grep -q 'package-ecosystem: github-actions' .github/dependabot.yml` | run |
+| dependencies current | `cargo deny check && grep -q '^[[:space:]]*- package-ecosystem: cargo$' .github/dependabot.yml && grep -q '^[[:space:]]*- package-ecosystem: github-actions$' .github/dependabot.yml` | run |
 | workspace layout | `cargo metadata --no-deps` members match the crate list in `docs/stack.md`, each crate named after its directory, and the root manifest sets `resolver = "3"` | manual |
 | no local state tracked | `f=/tmp/tau-tracked.$$ && git ls-files target .tau > $f && test ! -s $f; s=$?; rm -f $f; exit $s` | run |
 | toolchain pinned | `v=$(grep -o 'channel = ".*"' rust-toolchain.toml \| cut -d'"' -f2) && test -n "$v" && test "$v" = "$(awk -F'\|' '{if (index($0,"Toolchain")==3) {split($4,a," "); print a[1]}}' docs/stack.md)"` the pinned channel is the version the `Toolchain` row of `docs/stack.md` states first, that row and no other, compared as whole text | run |
@@ -40,7 +40,7 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | core installs no subscriber | `f=/tmp/tau-tree.$$ && cargo tree -p tau-core --all-features > $f && ! grep -qF -e tracing-subscriber -e tracing-appender -e env_logger -e log4rs $f; s=$?; rm -f $f; exit $s` | run |
 | live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` renders at full token rate with a writer and a checkpoint running, inside the frame budget `spike_gpui_surface` sets, and the render path reads no storage | M0 |
 | lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings` | run |
-| headless session | `cargo run -p tau-test --example headless -- --tape <f>` (R-workspace-14, R-workspace-15) | M0 |
+| headless session | `cargo run -p tau-test --example headless -- --tape <f>`, a session run with no surface | M0 |
 | desktop | `cargo run -p tau-app` (stub bin, no surface) | M0 |
 | eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` (no `eval` bin, no `suites/`) | M0 |
 

@@ -168,13 +168,17 @@ Carried: the three lines above stay open, and each has a named home. The delta-f
 clause-layout sweep belong with `change_spec_requirements`, the change that owns the spec format, and
 land there as its task lines. The Measure belongs with the `blobs` change this proposal promises to
 open, which is not in `changes/` yet, because the numbers it reproduces are that option's evidence and
-the schema to measure is the one this change landed. Two gate rows read nothing today and stay green:
+the schema to measure is the one this change landed. Rows that read nothing today and stay green, with the clause that will give each teeth:
 `contracts current` compares an empty generated set (teeth come with R-protocol-02 in `add_turn_loop`),
-and `spec tool` is a count smoke that prints 0 on an empty corpus. The name-list rows
-(`core has no HTTP client`, `core installs no subscriber`) match dependencies, not a hand-rolled client
-in core's own source, which is the scope their clauses state. `core spawns nothing` greps prose too, so
-a comment naming `.spawn(` reddens it — a false red, not a false green. `add_subagent_support` carries no
-`IDs:` line, unlike the other open changes; the format sweep above owns adding it.
+and `spec tool` prints a corpus count that no row compares to anything, so `spec/index.md`'s number
+carries no gate. The closed name lists (`core has no runtime`, `core has no UI logic`, `core has no
+HTTP client`, `core installs no subscriber`) match dependency names, so a hand-rolled client in core's
+own source, or a subscriber installed there under another name, stays green — wider than the clauses
+those rows answer to, which speak core's source and graph and every install site. `unit + surface`
+reads the `fail-fast` line and `-P ci` selects a profile by name; both are greps, not a config parse.
+`core spawns nothing` greps prose too, so a comment naming `.spawn(` reddens it — a false red, not a
+false green. Ten of the twelve open changes carry no `IDs:` line (`add_realtime_gui_output` and
+`add_turn_loop` do); the format sweep above owns adding them.
 
 - [x] archive: `spec -- archive adopt_block_log` ran; the leaf gained 8 (35..40, 45, 46) and retired 2
 (07, 30), so `spec/session/storage/spec.md` reads 25 requirements and `spec/index.md`'s corpus 33,

@@ -8,7 +8,7 @@ requires every number up to a domain's highest to be issued, so the protocol ran
 two open changes, recorded here and in that change's tasks.md.
 
 - [ ] spike: one stub provider stream polled from a tokio executor and from a plain futures executor in the same process, proving the event payload crosses the executor boundary owned (gate: none; record the result here)
-- [ ] gates: the rows `core has no HTTP client` and `core installs no subscriber` are in `AGENTS.md`, in the shape of `core has no runtime`, and green today; prove each red with a scratch dependency in `crates/tau-core/Cargo.toml`, then delete the scratch (R-workspace-18, R-workspace-16)
+- [ ] gates: open — prove each of `core has no HTTP client` and `core installs no subscriber` red with a scratch dependency in `crates/tau-core/Cargo.toml`, then delete the scratch (R-workspace-18, R-workspace-16). The rows themselves landed in `AGENTS.md`, in the shape of `core has no runtime`, and are green today.
 - [ ] R-protocol-01: the event set as Rust types in `crates/tau-protocol`, generated into `contracts/`; the
 scenario reads the numbering order the stub stream sends (@R-protocol-01), and the `contracts current`
 gate reports the new files

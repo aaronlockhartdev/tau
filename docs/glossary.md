@@ -3,7 +3,7 @@
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
 `gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
-`lane`: a test runner with a fixed scope: the ci lane, unit, behaviour, surface, eval.
+`lane`: a runner with a fixed scope: the ci lane, unit, behaviour, surface, eval.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
@@ -12,13 +12,13 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `fork`: a child session that copies a range of the parent's blocks and their requests.
 `steer`: send input to a running session, stored as a block in its log.
 `roster`: the view listing a session's children with their states.
-`config layer`: one of the two config levels, global and project, the project merged key by key.
+`config layer`: one of the two config levels, global and project, merged under the merge rules.
 `anchor`: the five-character handle a read serves for one line of one file.
 `outline`: a file's anchored declaration rows, bodies read on demand.
 `observation`: a condensation of a session's oldest messages, appended to its observations slot.
 `reflection`: a condensation of observations.
-`tape`: a recorded model transcript that answers calls in a lane, once the eval lane lands.
-`layer`: the agent-directory level or the project level of a config, context, or skill file.
+`tape`: a recorded model transcript that answers calls in place of a provider.
+`layer`: one of two levels a config, context, or skill file sits at, global and project.
 `tail`: the newest messages of a session, kept verbatim.
 `project`: the working directory's git root, or the working directory when it is not one.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
@@ -33,7 +33,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `terminal`: the reason a request ended, stamped on its row together with its counts.
 `state`: a pair of log sequences naming the context a block was built from.
 `stream`: the blocks one model call produces, closed at once by its provider.
-`event stream`: core's channel to the frontends: the events of a session, as core emits them.
+`event stream`: core's in-memory channel to the frontends: a session's events, as core emits them.
 `frontend`: a client of core's event stream: the desktop app `tau-app`, the ACP adapter `tau-acp`.
 `message`: a block of user, assistant, tool or injected text in a log.
 `markdown block`: a renderable range of transcript markdown — paragraph, list, fence, table; the renderer's block tree.
