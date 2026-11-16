@@ -77,7 +77,9 @@ as landing live — and are re-worded by this change, or the
 corpus ships two vocabularies. `adopt_observational_memory` needs more than wording: its
 `R-session-19` promised to replace the oldest messages, and `R-session-31` refuses any update to a log
 row, so that clause now appends an observation block naming the range it supersedes. The
-`crates/tau-protocol/src/bin/contracts.rs:1` comment cites R-workspace-04, which is not a live ID
+`crates/tau-protocol/src/bin/contracts.rs:1` comment cites R-workspace-04, a clause issued by
+`change_spec_requirements` and live only once that change archives: the citation stays, and the comment
+notes the clause is pending.
 (workspace runs 09..15): the citation moves to the invariant at `spec/index.md:7`.
 
 Eval: none needed — a log's unit is mechanical, and the lanes count commits and rows.

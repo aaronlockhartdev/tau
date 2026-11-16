@@ -6,7 +6,7 @@
 
 ## Options
 
-- A. {one-line shape}. Evidence: {measured here: number / spike / repro} · {external: source + date} · `unverified`. Cost: {new deps, runtime cost, +n tokens/turn if a turn pays it}
+- A. {one-line shape}. Evidence: {measured here: number / spike / repro} · {external: source + date} · `unverified`. Cost: {new deps, runtime cost, +n tokens/request if a request pays it}
 - B. {one-line shape}. Evidence: Cost:
 
 ## Decision

@@ -53,12 +53,11 @@ produced", `turn` reads "one request to the model and what it produced, numbered
 forms (`R-context-04`, `R-tools-16`, `R-tools-23`, `R-tools-28`, `R-surface-02`, `R-harness-08`); and the
 `Apply to` line naming the live leaf each delta applies to, missing from those same 9 deltas
 - [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
-`add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading` and
-`adopt_skills_convention`. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e
-committed changes/` finds those seven, counting `change_spec_requirements`, whose proposal states the retired
-committed marker as landing live; the matches in `_template`, `adopt_block_log`, `add_turn_loop`,
-`adopt_observational_memory` and `spike_gpui_surface` speak the new unit themselves, not the old one
-speak the new unit themselves, not the old one
+`add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
+`adopt_skills_convention` and `change_spec_requirements` (its proposal states the retired committed marker as
+landing live). `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e committed changes/`
+finds those seven, plus `adopt_block_log`, `add_turn_loop`, `adopt_observational_memory` and
+`spike_gpui_surface`, which speak the new unit themselves, not the old one
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
@@ -68,7 +67,7 @@ A clause whose `Acceptance:` sits in its own paragraph reads as a second obligat
 /^Acceptance:/{if(prev=="" && pprev !~ /^###/) n++} {pprev=prev; prev=$0} END{print n}' $(find changes -name
 "*.md" -not -path "*/archive/*")` counts 66 today, all of them in the out-of-range deltas named above; the
 headings of `REMOVED` clauses are skipped, since a REMOVED block carries no obligation. The sweep takes
-those 66 and the count reaches 0 (spec-review check 11)
+those 66 and the count reaches 0; the form is the template's, `changes/_template/specs/_domain_/_area_/spec.md`
 - [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
 `spec/session/storage/spec.md` gains 8 requirements and retires 2; `spec/session/spec.md`'s storage leaf
 count and `spec/index.md`'s Corpus count move by the same numbers read off the files
