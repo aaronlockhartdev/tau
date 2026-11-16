@@ -78,8 +78,8 @@ corpus ships two vocabularies. `adopt_observational_memory` needs more than word
 `R-session-19` promised to replace the oldest messages, and `R-session-31` refuses any update to a log
 row, so that clause now appends an observation block naming the range it supersedes. The
 `crates/tau-protocol/src/bin/contracts.rs:1` comment cites R-workspace-04, a clause issued by
-`change_spec_requirements` and live only once that change archives: the citation stays, and the comment
-notes the clause is pending.
+`change_spec_requirements` and live only once that change archives: the citation stays, and the comment will
+note the clause is pending, in the task below.
 
 Eval: none needed — a log's unit is mechanical, and the lanes count commits and rows.
 

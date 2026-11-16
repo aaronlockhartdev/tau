@@ -46,7 +46,7 @@ produced", `turn` reads "one request to the model and what it produced, numbered
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:66` and `:74` cite R-workspace-04, a clause
 `change_spec_requirements` issues and that goes live at its archive; each comment marks the clause pending, and
 the citation stays (R-workspace-04)
-- [ ] docs: sweep the deltas this change does not touch: bare `## ADDED` markers to `## ADDED Requirements`
+- [ ] docs: sweep the deltas this change does not re-format: bare `## ADDED` markers to `## ADDED Requirements`
 (`add_subagent_support` 4 leaves, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
 `adopt_hash_anchor_editing`, `adopt_skills_convention`); headings over the six-word cap (`R-config-01`,
 `R-config-05`, `R-acp-01`, `R-acp-04`, `R-acp-06`, `R-surface-01`, `R-surface-02`, `R-surface-07`,
