@@ -29,7 +29,7 @@ jobs:
       # Swatinem/rust-cache v2.9.3
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       # taiki-e/install-action v2.90.3
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519
         with:
           tool: cargo-deny@0.20.2,cargo-nextest@0.9.152
       # taiki-e/cache-cargo-install-action v3.0.8: rumdl and lychee are not in
